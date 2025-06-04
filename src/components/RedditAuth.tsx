@@ -7,37 +7,66 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { MessageCircle, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
+import { useBotCredentials } from "@/hooks/useBotCredentials";
+import { useAuth } from "@/hooks/useAuth";
 
-interface RedditAuthProps {
-  isAuthenticated: boolean;
-  onAuthenticate: () => void;
-}
-
-const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate }) => {
-  const [credentials, setCredentials] = useState({
+const RedditAuth: React.FC = () => {
+  const { user } = useAuth();
+  const { credentials, updateCredentials, isRedditConnected, loading } = useBotCredentials();
+  const [formData, setFormData] = useState({
     clientId: '',
     clientSecret: '',
     username: '',
     password: ''
   });
 
-  const handleConnect = () => {
-    if (!credentials.clientId || !credentials.clientSecret || !credentials.username || !credentials.password) {
+  React.useEffect(() => {
+    if (credentials) {
+      setFormData({
+        clientId: credentials.reddit_client_id || '',
+        clientSecret: credentials.reddit_client_secret || '',
+        username: credentials.reddit_username || '',
+        password: credentials.reddit_password || ''
+      });
+    }
+  }, [credentials]);
+
+  const handleConnect = async () => {
+    if (!user) {
+      toast.error("Please sign in first");
+      return;
+    }
+
+    if (!formData.clientId || !formData.clientSecret || !formData.username || !formData.password) {
       toast.error("Please fill in all Reddit credentials");
       return;
     }
     
-    // Simulate API connection
-    setTimeout(() => {
-      onAuthenticate();
-    }, 1500);
-    
-    toast.loading("Connecting to Reddit...", { duration: 1500 });
+    const success = await updateCredentials({
+      reddit_client_id: formData.clientId,
+      reddit_client_secret: formData.clientSecret,
+      reddit_username: formData.username,
+      reddit_password: formData.password
+    });
+
+    if (success) {
+      toast.success("Reddit credentials saved successfully!");
+    }
   };
 
   const handleInputChange = (field: string, value: string) => {
-    setCredentials(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
+
+  if (loading) {
+    return (
+      <Card className="bg-slate-800 border-slate-700">
+        <CardContent className="p-6">
+          <div className="text-center text-slate-400">Loading credentials...</div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="bg-slate-800 border-slate-700">
@@ -52,7 +81,7 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
               </CardDescription>
             </div>
           </div>
-          {isAuthenticated ? (
+          {isRedditConnected() ? (
             <Badge className="bg-green-600">
               <CheckCircle className="h-3 w-3 mr-1" />
               Connected
@@ -66,17 +95,23 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!isAuthenticated ? (
+        {!isRedditConnected() || !user ? (
           <>
+            {!user && (
+              <div className="text-center py-4 text-slate-400">
+                Please sign in to save your Reddit credentials
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="clientId" className="text-slate-300">Client ID</Label>
                 <Input
                   id="clientId"
                   placeholder="Reddit app client ID"
-                  value={credentials.clientId}
+                  value={formData.clientId}
                   onChange={(e) => handleInputChange('clientId', e.target.value)}
                   className="bg-slate-700 border-slate-600 text-white"
+                  disabled={!user}
                 />
               </div>
               <div>
@@ -85,9 +120,10 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
                   id="clientSecret"
                   type="password"
                   placeholder="Reddit app client secret"
-                  value={credentials.clientSecret}
+                  value={formData.clientSecret}
                   onChange={(e) => handleInputChange('clientSecret', e.target.value)}
                   className="bg-slate-700 border-slate-600 text-white"
+                  disabled={!user}
                 />
               </div>
             </div>
@@ -98,9 +134,10 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
                 <Input
                   id="username"
                   placeholder="Reddit username"
-                  value={credentials.username}
+                  value={formData.username}
                   onChange={(e) => handleInputChange('username', e.target.value)}
                   className="bg-slate-700 border-slate-600 text-white"
+                  disabled={!user}
                 />
               </div>
               <div>
@@ -109,16 +146,21 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
                   id="password"
                   type="password"
                   placeholder="Reddit password"
-                  value={credentials.password}
+                  value={formData.password}
                   onChange={(e) => handleInputChange('password', e.target.value)}
                   className="bg-slate-700 border-slate-600 text-white"
+                  disabled={!user}
                 />
               </div>
             </div>
             
-            <Button onClick={handleConnect} className="w-full bg-orange-600 hover:bg-orange-700">
+            <Button 
+              onClick={handleConnect} 
+              className="w-full bg-orange-600 hover:bg-orange-700"
+              disabled={!user}
+            >
               <MessageCircle className="h-4 w-4 mr-2" />
-              Connect to Reddit
+              {user ? 'Save Reddit Credentials' : 'Sign In to Connect Reddit'}
             </Button>
           </>
         ) : (
@@ -126,6 +168,13 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
             <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
             <p className="text-green-400 font-medium">Successfully connected to Reddit</p>
             <p className="text-slate-400 text-sm">Bot can now monitor subreddits and post answers</p>
+            <Button 
+              onClick={() => setFormData({ clientId: '', clientSecret: '', username: '', password: '' })}
+              variant="outline"
+              className="mt-4 text-slate-300 border-slate-600 hover:bg-slate-700"
+            >
+              Update Credentials
+            </Button>
           </div>
         )}
       </CardContent>

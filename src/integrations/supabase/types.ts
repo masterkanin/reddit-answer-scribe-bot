@@ -9,7 +9,206 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      [_ in never]: never
+      bot_credentials: {
+        Row: {
+          created_at: string
+          gemini_api_key: string | null
+          id: string
+          reddit_client_id: string | null
+          reddit_client_secret: string | null
+          reddit_password: string | null
+          reddit_username: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          gemini_api_key?: string | null
+          id?: string
+          reddit_client_id?: string | null
+          reddit_client_secret?: string | null
+          reddit_password?: string | null
+          reddit_username?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          gemini_api_key?: string | null
+          id?: string
+          reddit_client_id?: string | null
+          reddit_client_secret?: string | null
+          reddit_password?: string | null
+          reddit_username?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      bot_sessions: {
+        Row: {
+          created_at: string
+          error_count: number
+          id: string
+          is_active: boolean
+          questions_processed: number
+          session_end: string | null
+          session_start: string
+          successful_answers: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error_count?: number
+          id?: string
+          is_active?: boolean
+          questions_processed?: number
+          session_end?: string | null
+          session_start?: string
+          successful_answers?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error_count?: number
+          id?: string
+          is_active?: boolean
+          questions_processed?: number
+          session_end?: string | null
+          session_start?: string
+          successful_answers?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          full_name: string | null
+          id: string
+          updated_at: string
+          username: string | null
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id: string
+          updated_at?: string
+          username?: string | null
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
+      questions_answered: {
+        Row: {
+          created_at: string
+          downvotes: number | null
+          generated_answer: string
+          id: string
+          question_author: string
+          question_content: string | null
+          question_title: string
+          reddit_comment_id: string | null
+          reddit_post_id: string
+          response_time_ms: number | null
+          session_id: string | null
+          status: string
+          subreddit_name: string
+          updated_at: string
+          upvotes: number | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          downvotes?: number | null
+          generated_answer: string
+          id?: string
+          question_author: string
+          question_content?: string | null
+          question_title: string
+          reddit_comment_id?: string | null
+          reddit_post_id: string
+          response_time_ms?: number | null
+          session_id?: string | null
+          status?: string
+          subreddit_name: string
+          updated_at?: string
+          upvotes?: number | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          downvotes?: number | null
+          generated_answer?: string
+          id?: string
+          question_author?: string
+          question_content?: string | null
+          question_title?: string
+          reddit_comment_id?: string | null
+          reddit_post_id?: string
+          response_time_ms?: number | null
+          session_id?: string | null
+          status?: string
+          subreddit_name?: string
+          updated_at?: string
+          upvotes?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questions_answered_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "bot_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subreddit_monitoring: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          monitoring_keywords: string[] | null
+          subreddit_name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          monitoring_keywords?: string[] | null
+          subreddit_name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          monitoring_keywords?: string[] | null
+          subreddit_name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
