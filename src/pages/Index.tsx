@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Bot, Activity, Settings, Plus, Trash2, Reddit, Zap } from "lucide-react";
+import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap } from "lucide-react";
 import RedditAuth from "@/components/RedditAuth";
 import SubredditManager from "@/components/SubredditManager";
 import BotActivity from "@/components/BotActivity";
@@ -67,7 +66,7 @@ const Index = () => {
               Dashboard
             </TabsTrigger>
             <TabsTrigger value="subreddits" className="data-[state=active]:bg-blue-600">
-              <Reddit className="h-4 w-4 mr-2" />
+              <MessageCircle className="h-4 w-4 mr-2" />
               Subreddits
             </TabsTrigger>
             <TabsTrigger value="settings" className="data-[state=active]:bg-blue-600">

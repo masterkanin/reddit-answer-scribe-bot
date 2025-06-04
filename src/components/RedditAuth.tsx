@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Reddit, CheckCircle, XCircle } from "lucide-react";
+import { MessageCircle, CheckCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 interface RedditAuthProps {
@@ -44,7 +44,7 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <Reddit className="h-6 w-6 text-orange-500" />
+            <MessageCircle className="h-6 w-6 text-orange-500" />
             <div>
               <CardTitle className="text-white">Reddit Connection</CardTitle>
               <CardDescription className="text-slate-400">
@@ -117,7 +117,7 @@ const RedditAuth: React.FC<RedditAuthProps> = ({ isAuthenticated, onAuthenticate
             </div>
             
             <Button onClick={handleConnect} className="w-full bg-orange-600 hover:bg-orange-700">
-              <Reddit className="h-4 w-4 mr-2" />
+              <MessageCircle className="h-4 w-4 mr-2" />
               Connect to Reddit
             </Button>
           </>
