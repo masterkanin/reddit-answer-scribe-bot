@@ -35,7 +35,7 @@ export const useBotOperations = () => {
   const [currentSession, setCurrentSession] = useState<BotSession | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [recentActivities, setRecentActivities] = useState<QuestionAnswered[]>([]);
-  const intervalRef = useRef<number | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Start bot session
   const startBot = async (subreddits: string[]) => {
