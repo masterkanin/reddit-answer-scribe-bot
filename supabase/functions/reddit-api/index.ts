@@ -24,6 +24,7 @@ serve(async (req) => {
     // Get user from Authorization header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.error('Missing authorization header');
       throw new Error('Missing authorization header');
     }
 
@@ -32,27 +33,40 @@ serve(async (req) => {
     );
 
     if (userError || !user) {
+      console.error('Invalid user token:', userError);
       throw new Error('Invalid user token');
     }
 
+    console.log('Processing request for user:', user.id);
+
     const { action, subredditName, postId, comment } = await req.json();
+    console.log('Action:', action, 'Subreddit:', subredditName);
 
     // Get user's Reddit credentials
     const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
       .select('reddit_client_id, reddit_client_secret, reddit_username, reddit_password')
       .eq('user_id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (credError || !credentials) {
+    if (credError) {
+      console.error('Error fetching credentials:', credError);
+      throw new Error('Error fetching Reddit credentials');
+    }
+
+    if (!credentials) {
+      console.error('No Reddit credentials found for user:', user.id);
       throw new Error('Reddit credentials not found');
     }
 
     const { reddit_client_id, reddit_client_secret, reddit_username, reddit_password } = credentials;
 
     if (!reddit_client_id || !reddit_client_secret || !reddit_username || !reddit_password) {
+      console.error('Incomplete Reddit credentials');
       throw new Error('Incomplete Reddit credentials');
     }
+
+    console.log('Got Reddit credentials, authenticating...');
 
     // Get Reddit access token
     const authString = btoa(`${reddit_client_id}:${reddit_client_secret}`);
@@ -67,15 +81,20 @@ serve(async (req) => {
     });
 
     if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error('Failed to get Reddit access token:', errorText);
       throw new Error('Failed to get Reddit access token');
     }
 
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
+    console.log('Got Reddit access token');
 
     let result;
 
     if (action === 'getQuestions') {
+      console.log(`Fetching posts from r/${subredditName}`);
+      
       // Get new posts from subreddit
       const response = await fetch(`https://oauth.reddit.com/r/${subredditName}/new.json?limit=25`, {
         headers: {
@@ -85,10 +104,14 @@ serve(async (req) => {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to fetch r/${subredditName}:`, errorText);
         throw new Error('Failed to fetch subreddit posts');
       }
 
       const data = await response.json();
+      console.log(`Fetched ${data.data?.children?.length || 0} posts from r/${subredditName}`);
+      
       const posts = data.data.children.map((child: any) => ({
         id: child.data.id,
         title: child.data.title,
@@ -98,26 +121,16 @@ serve(async (req) => {
         num_comments: child.data.num_comments,
         score: child.data.score,
         permalink: child.data.permalink,
+        url: child.data.url,
       }));
 
-      // Filter for questions (posts with question marks or common question words)
-      const questions = posts.filter((post: any) => {
-        const text = (post.title + ' ' + post.selftext).toLowerCase();
-        return (
-          text.includes('?') ||
-          text.includes('how ') ||
-          text.includes('what ') ||
-          text.includes('why ') ||
-          text.includes('when ') ||
-          text.includes('where ') ||
-          text.includes('which ') ||
-          text.includes('who ')
-        );
-      });
-
-      result = { questions };
+      // Don't filter here - let the client handle question detection
+      result = { questions: posts };
+      console.log(`Returning ${posts.length} posts for processing`);
 
     } else if (action === 'postComment') {
+      console.log(`Posting comment to post ${postId}`);
+      
       // Post a comment to a Reddit post
       const response = await fetch('https://oauth.reddit.com/api/comment', {
         method: 'POST',
@@ -130,11 +143,17 @@ serve(async (req) => {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to post comment:', errorText);
         throw new Error('Failed to post comment');
       }
 
       const data = await response.json();
-      result = { success: true, commentId: data.json?.data?.things?.[0]?.data?.id };
+      console.log('Comment response:', data);
+      
+      const commentId = data.json?.data?.things?.[0]?.data?.id;
+      result = { success: true, commentId };
+      console.log(`Successfully posted comment with ID: ${commentId}`);
 
     } else {
       throw new Error('Invalid action');

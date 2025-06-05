@@ -45,6 +45,8 @@ export const useBotOperations = () => {
     }
 
     try {
+      console.log('Starting bot session for user:', user.id);
+      
       // Create new session
       const { data: session, error } = await supabase
         .from('bot_sessions')
@@ -61,6 +63,7 @@ export const useBotOperations = () => {
         return false;
       }
 
+      console.log('Bot session created:', session);
       setCurrentSession(session);
       setIsRunning(true);
 
@@ -81,6 +84,8 @@ export const useBotOperations = () => {
     if (!currentSession) return;
 
     try {
+      console.log('Stopping bot session:', currentSession.id);
+      
       // Stop monitoring loop
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -109,15 +114,42 @@ export const useBotOperations = () => {
     }
   };
 
+  // Improved question detection
+  const isQuestion = (title: string, content: string = '') => {
+    const text = (title + ' ' + content).toLowerCase();
+    
+    // Check for question marks
+    if (text.includes('?')) return true;
+    
+    // Check for question words at the beginning
+    const questionStarters = [
+      'how ', 'what ', 'why ', 'when ', 'where ', 'which ', 'who ',
+      'can ', 'could ', 'would ', 'should ', 'will ', 'do ', 'does ',
+      'is ', 'are ', 'was ', 'were ', 'has ', 'have ', 'had ',
+      'help', 'advice', 'recommend', 'suggest', 'explain'
+    ];
+    
+    return questionStarters.some(starter => 
+      text.startsWith(starter) || text.includes(' ' + starter)
+    );
+  };
+
   // Monitor subreddits for questions
   const startMonitoring = (sessionId: string, subreddits: string[]) => {
+    console.log('Starting monitoring for subreddits:', subreddits);
+    
     const monitorLoop = async () => {
-      if (!user) return;
+      if (!user) {
+        console.log('No user found, stopping monitoring');
+        return;
+      }
 
-      console.log('Monitoring subreddits:', subreddits);
+      console.log('Monitoring cycle started for subreddits:', subreddits);
 
       for (const subreddit of subreddits) {
         try {
+          console.log(`Fetching questions from r/${subreddit}`);
+          
           // Get questions from Reddit
           const response = await supabase.functions.invoke('reddit-api', {
             body: {
@@ -127,15 +159,31 @@ export const useBotOperations = () => {
           });
 
           if (response.error) {
-            console.error('Reddit API error:', response.error);
+            console.error(`Reddit API error for r/${subreddit}:`, response.error);
             continue;
           }
 
-          const { questions } = response.data;
+          const { questions } = response.data || {};
           
-          // Process each question
-          for (const question of questions.slice(0, 3)) { // Limit to 3 questions per cycle
+          if (!questions || questions.length === 0) {
+            console.log(`No posts found in r/${subreddit}`);
+            continue;
+          }
+
+          console.log(`Found ${questions.length} posts in r/${subreddit}`);
+          
+          // Filter for actual questions using improved detection
+          const actualQuestions = questions.filter((post: any) => 
+            isQuestion(post.title, post.selftext)
+          );
+          
+          console.log(`Filtered to ${actualQuestions.length} questions in r/${subreddit}`);
+          
+          // Process each question (limit to 2 per subreddit per cycle)
+          for (const question of actualQuestions.slice(0, 2)) {
             try {
+              console.log(`Processing question: ${question.title}`);
+              
               // Check if we've already answered this question
               const { data: existing } = await supabase
                 .from('questions_answered')
@@ -144,8 +192,13 @@ export const useBotOperations = () => {
                 .eq('user_id', user.id)
                 .maybeSingle();
 
-              if (existing) continue; // Already answered
+              if (existing) {
+                console.log(`Already answered question ${question.id}, skipping`);
+                continue;
+              }
 
+              console.log('Generating answer with Gemini AI...');
+              
               // Generate answer using Gemini
               const aiResponse = await supabase.functions.invoke('gemini-ai', {
                 body: {
@@ -161,8 +214,10 @@ export const useBotOperations = () => {
               }
 
               const { answer } = aiResponse.data;
+              console.log('Generated answer:', answer?.substring(0, 100) + '...');
 
               // Post comment to Reddit
+              console.log('Posting comment to Reddit...');
               const commentResponse = await supabase.functions.invoke('reddit-api', {
                 body: {
                   action: 'postComment',
@@ -174,9 +229,12 @@ export const useBotOperations = () => {
               let commentId = null;
               let status = 'failed';
 
-              if (!commentResponse.error && commentResponse.data.success) {
+              if (!commentResponse.error && commentResponse.data?.success) {
                 commentId = commentResponse.data.commentId;
                 status = 'posted';
+                console.log('Successfully posted comment:', commentId);
+              } else {
+                console.error('Failed to post comment:', commentResponse.error);
               }
 
               // Save to database
@@ -188,7 +246,7 @@ export const useBotOperations = () => {
                   subreddit_name: subreddit,
                   reddit_post_id: question.id,
                   question_title: question.title,
-                  question_content: question.selftext,
+                  question_content: question.selftext || null,
                   question_author: question.author,
                   generated_answer: answer,
                   reddit_comment_id: commentId,
@@ -197,6 +255,8 @@ export const useBotOperations = () => {
 
               if (saveError) {
                 console.error('Error saving answer:', saveError);
+              } else {
+                console.log('Answer saved to database successfully');
               }
 
               // Update session stats
@@ -210,23 +270,36 @@ export const useBotOperations = () => {
                 })
                 .eq('id', sessionId);
 
-              console.log(`Processed question: ${question.title} - Status: ${status}`);
+              console.log(`Completed processing: ${question.title} - Status: ${status}`);
+
+              // Add a small delay between processing questions
+              await new Promise(resolve => setTimeout(resolve, 2000));
 
             } catch (error) {
               console.error('Error processing question:', error);
+              
+              // Update error count
+              await supabase
+                .from('bot_sessions')
+                .update({
+                  error_count: currentSession ? currentSession.error_count + 1 : 1,
+                })
+                .eq('id', sessionId);
             }
           }
         } catch (error) {
           console.error(`Error monitoring r/${subreddit}:`, error);
         }
       }
+
+      console.log('Monitoring cycle completed');
     };
 
-    // Run every 60 seconds
-    intervalRef.current = setInterval(monitorLoop, 60000);
-    
     // Run immediately once
     monitorLoop();
+    
+    // Then run every 90 seconds (increased from 60 to avoid rate limiting)
+    intervalRef.current = setInterval(monitorLoop, 90000);
   };
 
   // Fetch recent activities
