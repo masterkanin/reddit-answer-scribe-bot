@@ -84,6 +84,8 @@ export const useBotCredentials = () => {
         .upsert({
           user_id: user.id,
           ...updatedCredentials,
+        }, {
+          onConflict: 'user_id'
         });
 
       if (error) {
