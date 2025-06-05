@@ -4,17 +4,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, ExternalLink, Clock, User, ArrowUp } from "lucide-react";
+import { MessageSquare, ExternalLink, Clock, User, ArrowUp, CheckCircle, XCircle } from "lucide-react";
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
 
 interface ActivityItem {
   id: string;
-  type: 'question_found' | 'answer_posted' | 'error';
+  type: 'answer_posted' | 'answer_failed';
   subreddit: string;
   title: string;
   author: string;
   timestamp: Date;
   url?: string;
   score?: number;
+  status: string;
 }
 
 interface BotActivityProps {
@@ -22,57 +25,102 @@ interface BotActivityProps {
 }
 
 const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
+  const { user } = useAuth();
   const [activities, setActivities] = useState<ActivityItem[]>([]);
 
-  // Simulate real-time activity when bot is active
+  // Fetch real activities from database
+  const fetchActivities = async () => {
+    if (!user) {
+      setActivities([]);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('questions_answered')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) {
+        console.error('Error fetching activities:', error);
+        return;
+      }
+
+      const formattedActivities: ActivityItem[] = (data || []).map(item => ({
+        id: item.id,
+        type: item.status === 'posted' ? 'answer_posted' : 'answer_failed',
+        subreddit: item.subreddit_name,
+        title: item.question_title,
+        author: item.question_author,
+        timestamp: new Date(item.created_at),
+        url: item.reddit_comment_id ? `https://reddit.com/r/${item.subreddit_name}/comments/${item.reddit_post_id}/_/${item.reddit_comment_id}` : undefined,
+        score: (item.upvotes || 0) - (item.downvotes || 0),
+        status: item.status,
+      }));
+
+      setActivities(formattedActivities);
+    } catch (error) {
+      console.error('Error fetching activities:', error);
+    }
+  };
+
+  // Set up real-time subscription for new activities
   useEffect(() => {
-    if (!isActive) return;
+    if (!user) return;
 
-    const interval = setInterval(() => {
-      const newActivity: ActivityItem = {
-        id: Date.now().toString(),
-        type: Math.random() > 0.3 ? 'answer_posted' : 'question_found',
-        subreddit: ['AskReddit', 'explainlikeimfive', 'NoStupidQuestions'][Math.floor(Math.random() * 3)],
-        title: [
-          "How does quantum computing actually work?",
-          "Why do cats purr when they're happy?",
-          "What's the difference between HTTP and HTTPS?",
-          "How do solar panels convert sunlight to electricity?",
-          "Why do we dream during sleep?",
-          "What causes northern lights to appear?",
-          "How do vaccines protect against diseases?"
-        ][Math.floor(Math.random() * 7)],
-        author: `user${Math.floor(Math.random() * 1000)}`,
-        timestamp: new Date(),
-        url: `https://reddit.com/r/example/comments/${Math.random().toString(36).substring(7)}`,
-        score: Math.floor(Math.random() * 50) + 1
-      };
+    fetchActivities();
 
-      setActivities(prev => [newActivity, ...prev.slice(0, 19)]);
-    }, Math.random() * 10000 + 5000); // Random interval between 5-15 seconds
+    const channel = supabase
+      .channel('questions_answered_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'questions_answered',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          console.log('New activity:', payload);
+          const newActivity: ActivityItem = {
+            id: payload.new.id,
+            type: payload.new.status === 'posted' ? 'answer_posted' : 'answer_failed',
+            subreddit: payload.new.subreddit_name,
+            title: payload.new.question_title,
+            author: payload.new.question_author,
+            timestamp: new Date(payload.new.created_at),
+            url: payload.new.reddit_comment_id ? 
+              `https://reddit.com/r/${payload.new.subreddit_name}/comments/${payload.new.reddit_post_id}/_/${payload.new.reddit_comment_id}` : 
+              undefined,
+            score: (payload.new.upvotes || 0) - (payload.new.downvotes || 0),
+            status: payload.new.status,
+          };
+          
+          setActivities(prev => [newActivity, ...prev.slice(0, 19)]);
+        }
+      )
+      .subscribe();
 
-    return () => clearInterval(interval);
-  }, [isActive]);
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
-  const getActivityIcon = (type: string) => {
-    switch (type) {
-      case 'question_found':
-        return <MessageSquare className="h-4 w-4 text-blue-400" />;
-      case 'answer_posted':
-        return <ArrowUp className="h-4 w-4 text-green-400" />;
-      default:
-        return <Clock className="h-4 w-4 text-red-400" />;
+  const getActivityIcon = (type: string, status: string) => {
+    if (type === 'answer_posted' && status === 'posted') {
+      return <CheckCircle className="h-4 w-4 text-green-400" />;
+    } else {
+      return <XCircle className="h-4 w-4 text-red-400" />;
     }
   };
 
   const getActivityText = (activity: ActivityItem) => {
-    switch (activity.type) {
-      case 'question_found':
-        return 'Found new question';
-      case 'answer_posted':
-        return 'Posted answer';
-      default:
-        return 'Error occurred';
+    if (activity.type === 'answer_posted' && activity.status === 'posted') {
+      return 'Posted answer';
+    } else {
+      return 'Failed to post answer';
     }
   };
 
@@ -82,7 +130,8 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
     
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
   };
 
   return (
@@ -113,7 +162,7 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
               ) : (
                 <div>
                   <Clock className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Bot is currently inactive</p>
+                  <p>No recent activity</p>
                   <p className="text-sm">Start the bot to see live activity</p>
                 </div>
               )}
@@ -126,7 +175,7 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
                   className="flex items-start space-x-3 p-3 bg-slate-700 rounded-lg border border-slate-600 hover:bg-slate-600 transition-colors"
                 >
                   <div className="mt-1">
-                    {getActivityIcon(activity.type)}
+                    {getActivityIcon(activity.type, activity.status)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2 mb-1">
@@ -147,7 +196,7 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
                       <div className="flex items-center space-x-2 text-xs text-slate-400">
                         <User className="h-3 w-3" />
                         <span>u/{activity.author}</span>
-                        {activity.score && (
+                        {activity.score !== undefined && activity.status === 'posted' && (
                           <>
                             <ArrowUp className="h-3 w-3" />
                             <span>{activity.score}</span>
@@ -155,7 +204,12 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
                         )}
                       </div>
                       {activity.url && (
-                        <Button variant="ghost" size="sm" className="h-6 px-2 text-blue-400 hover:text-blue-300">
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-6 px-2 text-blue-400 hover:text-blue-300"
+                          onClick={() => window.open(activity.url, '_blank')}
+                        >
                           <ExternalLink className="h-3 w-3" />
                         </Button>
                       )}

@@ -3,12 +3,13 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User } from "lucide-react";
+import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle } from "lucide-react";
 import RedditAuth from "@/components/RedditAuth";
 import SubredditManager from "@/components/SubredditManager";
 import BotActivity from "@/components/BotActivity";
@@ -16,14 +17,43 @@ import BotStats from "@/components/BotStats";
 import AuthDialog from "@/components/AuthDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useBotCredentials } from "@/hooks/useBotCredentials";
+import { useBotOperations } from "@/hooks/useBotOperations";
 
 const Index = () => {
   const { user, signOut, loading: authLoading } = useAuth();
-  const { isRedditConnected, isGeminiConnected } = useBotCredentials();
-  const [botActive, setBotActive] = useState(false);
+  const { credentials, updateCredentials, isRedditConnected, isGeminiConnected, loading: credentialsLoading } = useBotCredentials();
+  const { isRunning, startBot, stopBot } = useBotOperations();
   const [subreddits, setSubreddits] = useState(['AskReddit', 'explainlikeimfive', 'NoStupidQuestions']);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
 
-  const toggleBot = () => {
+  // Sync Gemini API key with credentials
+  useEffect(() => {
+    if (credentials?.gemini_api_key) {
+      setGeminiApiKey(credentials.gemini_api_key);
+    }
+  }, [credentials]);
+
+  const handleSaveGeminiKey = async () => {
+    if (!user) {
+      toast.error("Please sign in first");
+      return;
+    }
+
+    if (!geminiApiKey.trim()) {
+      toast.error("Please enter a valid Gemini API key");
+      return;
+    }
+
+    const success = await updateCredentials({
+      gemini_api_key: geminiApiKey.trim()
+    });
+
+    if (success) {
+      toast.success("Gemini API key saved successfully!");
+    }
+  };
+
+  const toggleBot = async () => {
     if (!user) {
       toast.error("Please sign in to control the bot");
       return;
@@ -39,8 +69,16 @@ const Index = () => {
       return;
     }
 
-    setBotActive(!botActive);
-    toast.success(botActive ? "Bot stopped" : "Bot started monitoring subreddits");
+    if (subreddits.length === 0) {
+      toast.error("Please add at least one subreddit to monitor");
+      return;
+    }
+
+    if (isRunning) {
+      await stopBot();
+    } else {
+      await startBot(subreddits);
+    }
   };
 
   if (authLoading) {
@@ -73,16 +111,16 @@ const Index = () => {
                   <User className="h-4 w-4" />
                   <span className="text-sm">{user.email}</span>
                 </div>
-                <Badge variant={botActive ? "default" : "secondary"} className="px-3 py-1">
-                  {botActive ? "🟢 Active" : "🔴 Inactive"}
+                <Badge variant={isRunning ? "default" : "secondary"} className="px-3 py-1">
+                  {isRunning ? "🟢 Active" : "🔴 Inactive"}
                 </Badge>
                 <Button 
                   onClick={toggleBot} 
-                  disabled={!isRedditConnected() || !isGeminiConnected()}
-                  className={`${botActive ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
+                  disabled={!isRedditConnected() || !isGeminiConnected() || subreddits.length === 0}
+                  className={`${isRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
                 >
                   <Zap className="h-4 w-4 mr-2" />
-                  {botActive ? 'Stop Bot' : 'Start Bot'}
+                  {isRunning ? 'Stop Bot' : 'Start Bot'}
                 </Button>
                 <Button 
                   onClick={signOut}
@@ -140,7 +178,7 @@ const Index = () => {
             <TabsContent value="dashboard" className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2">
-                  <BotActivity isActive={botActive} />
+                  <BotActivity isActive={isRunning} />
                 </div>
                 <div>
                   <BotStats />
@@ -161,20 +199,74 @@ const Index = () => {
                 <RedditAuth />
                 <Card className="bg-slate-800 border-slate-700">
                   <CardHeader>
-                    <CardTitle className="text-white">Gemini AI Configuration</CardTitle>
-                    <CardDescription className="text-slate-400">
-                      Configure your Google Gemini API for generating answers
-                    </CardDescription>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-3">
+                        <Zap className="h-6 w-6 text-green-500" />
+                        <div>
+                          <CardTitle className="text-white">Gemini AI Configuration</CardTitle>
+                          <CardDescription className="text-slate-400">
+                            Configure your Google Gemini API for generating answers
+                          </CardDescription>
+                        </div>
+                      </div>
+                      {isGeminiConnected() ? (
+                        <Badge className="bg-green-600">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Connected
+                        </Badge>
+                      ) : (
+                        <Badge variant="destructive">
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Disconnected
+                        </Badge>
+                      )}
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <Input 
-                      placeholder="Enter your Gemini API key" 
-                      type="password"
-                      className="bg-slate-700 border-slate-600 text-white"
-                    />
-                    <Button className="w-full bg-blue-600 hover:bg-blue-700">
-                      Save API Key
-                    </Button>
+                    {credentialsLoading ? (
+                      <div className="text-center text-slate-400">Loading...</div>
+                    ) : !isGeminiConnected() || !user ? (
+                      <>
+                        {!user && (
+                          <div className="text-center py-4 text-slate-400">
+                            Please sign in to save your Gemini API key
+                          </div>
+                        )}
+                        <div className="space-y-2">
+                          <Label htmlFor="gemini-key" className="text-slate-300">Gemini API Key</Label>
+                          <Input 
+                            id="gemini-key"
+                            placeholder="Enter your Gemini API key" 
+                            type="password"
+                            value={geminiApiKey}
+                            onChange={(e) => setGeminiApiKey(e.target.value)}
+                            className="bg-slate-700 border-slate-600 text-white"
+                            disabled={!user}
+                          />
+                        </div>
+                        <Button 
+                          onClick={handleSaveGeminiKey}
+                          className="w-full bg-green-600 hover:bg-green-700"
+                          disabled={!user || !geminiApiKey.trim()}
+                        >
+                          <Zap className="h-4 w-4 mr-2" />
+                          {user ? 'Save API Key' : 'Sign In to Connect Gemini'}
+                        </Button>
+                      </>
+                    ) : (
+                      <div className="text-center py-4">
+                        <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
+                        <p className="text-green-400 font-medium">Successfully connected to Gemini AI</p>
+                        <p className="text-slate-400 text-sm">Bot can now generate intelligent answers</p>
+                        <Button 
+                          onClick={() => setGeminiApiKey('')}
+                          variant="outline"
+                          className="mt-4 text-slate-300 border-slate-600 hover:bg-slate-700"
+                        >
+                          Update API Key
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </div>
