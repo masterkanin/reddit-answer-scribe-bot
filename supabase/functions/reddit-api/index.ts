@@ -17,10 +17,6 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: { persistSession: false },
-    });
-
     // Get user from Authorization header
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
@@ -28,21 +24,35 @@ serve(async (req) => {
       throw new Error('Missing authorization header');
     }
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser(
-      authHeader.replace('Bearer ', '')
-    );
+    // Extract the JWT token
+    const token = authHeader.replace('Bearer ', '');
+    console.log('Received auth token, length:', token.length);
+
+    // Create Supabase client with the user's token for RLS
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false },
+      global: {
+        headers: {
+          Authorization: authHeader,
+        },
+      },
+    });
+
+    // Verify user authentication and get user info
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
     if (userError || !user) {
       console.error('Invalid user token:', userError);
       throw new Error('Invalid user token');
     }
 
-    console.log('Processing request for user:', user.id);
+    console.log('Authenticated user:', user.id);
 
     const { action, subredditName, postId, comment } = await req.json();
-    console.log('Action:', action, 'Subreddit:', subredditName);
+    console.log('Action:', action, 'Subreddit:', subredditName, 'User ID:', user.id);
 
-    // Get user's Reddit credentials
+    // Get user's Reddit credentials using the authenticated client
+    console.log('Fetching Reddit credentials for user:', user.id);
     const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
       .select('reddit_client_id, reddit_client_secret, reddit_username, reddit_password')
@@ -51,13 +61,21 @@ serve(async (req) => {
 
     if (credError) {
       console.error('Error fetching credentials:', credError);
-      throw new Error('Error fetching Reddit credentials');
+      throw new Error(`Database error fetching Reddit credentials: ${credError.message}`);
     }
 
     if (!credentials) {
       console.error('No Reddit credentials found for user:', user.id);
       throw new Error('Reddit credentials not found. Please configure your Reddit API credentials first.');
     }
+
+    console.log('Successfully fetched credentials for user:', user.id);
+    console.log('Credentials check:', {
+      hasClientId: !!credentials.reddit_client_id,
+      hasClientSecret: !!credentials.reddit_client_secret,
+      hasUsername: !!credentials.reddit_username,
+      hasPassword: !!credentials.reddit_password
+    });
 
     const { reddit_client_id, reddit_client_secret, reddit_username, reddit_password } = credentials;
 
@@ -69,7 +87,7 @@ serve(async (req) => {
         username: !reddit_username,
         password: !reddit_password
       });
-      throw new Error('Incomplete Reddit credentials. Please ensure all fields are filled.');
+      throw new Error('Incomplete Reddit credentials. Please ensure all fields are filled in the Reddit connection settings.');
     }
 
     console.log('Reddit credentials validated, attempting authentication...');
