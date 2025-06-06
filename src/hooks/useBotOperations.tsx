@@ -70,7 +70,7 @@ export const useBotOperations = () => {
       // Start monitoring loop
       startMonitoring(session.id, subreddits);
       
-      toast.success('Bot started successfully');
+      toast.success('Bot started successfully! Monitor the activity feed for results.');
       return true;
     } catch (error) {
       console.error('Error starting bot:', error);
@@ -114,23 +114,29 @@ export const useBotOperations = () => {
     }
   };
 
-  // Improved question detection
+  // Enhanced question detection
   const isQuestion = (title: string, content: string = '') => {
-    const text = (title + ' ' + content).toLowerCase();
+    const text = (title + ' ' + content).toLowerCase().trim();
+    
+    // Skip if text is too short
+    if (text.length < 10) return false;
     
     // Check for question marks
     if (text.includes('?')) return true;
     
-    // Check for question words at the beginning
+    // Check for question words at the beginning or after common words
     const questionStarters = [
       'how ', 'what ', 'why ', 'when ', 'where ', 'which ', 'who ',
-      'can ', 'could ', 'would ', 'should ', 'will ', 'do ', 'does ',
+      'can ', 'could ', 'would ', 'should ', 'will ', 'do ', 'does ', 'did ',
       'is ', 'are ', 'was ', 'were ', 'has ', 'have ', 'had ',
-      'help', 'advice', 'recommend', 'suggest', 'explain'
+      'help', 'advice', 'recommend', 'suggest', 'explain', 'question',
+      'anyone know', 'does anyone', 'can someone', 'looking for'
     ];
     
     return questionStarters.some(starter => 
-      text.startsWith(starter) || text.includes(' ' + starter)
+      text.startsWith(starter) || 
+      text.includes(' ' + starter) ||
+      text.includes('i ' + starter)
     );
   };
 
@@ -144,11 +150,11 @@ export const useBotOperations = () => {
         return;
       }
 
-      console.log('Monitoring cycle started for subreddits:', subreddits);
+      console.log('=== Starting monitoring cycle ===');
 
       for (const subreddit of subreddits) {
         try {
-          console.log(`Fetching questions from r/${subreddit}`);
+          console.log(`🔍 Checking r/${subreddit} for questions...`);
           
           // Get questions from Reddit
           const response = await supabase.functions.invoke('reddit-api', {
@@ -159,30 +165,45 @@ export const useBotOperations = () => {
           });
 
           if (response.error) {
-            console.error(`Reddit API error for r/${subreddit}:`, response.error);
+            console.error(`❌ Reddit API error for r/${subreddit}:`, response.error);
+            toast.error(`Error accessing r/${subreddit}: ${response.error.message}`);
+            
+            // Update error count
+            await supabase
+              .from('bot_sessions')
+              .update({
+                error_count: currentSession ? currentSession.error_count + 1 : 1,
+              })
+              .eq('id', sessionId);
+            
             continue;
           }
 
           const { questions } = response.data || {};
           
           if (!questions || questions.length === 0) {
-            console.log(`No posts found in r/${subreddit}`);
+            console.log(`📭 No posts found in r/${subreddit}`);
             continue;
           }
 
-          console.log(`Found ${questions.length} posts in r/${subreddit}`);
+          console.log(`📥 Found ${questions.length} posts in r/${subreddit}`);
           
-          // Filter for actual questions using improved detection
+          // Filter for actual questions using enhanced detection
           const actualQuestions = questions.filter((post: any) => 
             isQuestion(post.title, post.selftext)
           );
           
-          console.log(`Filtered to ${actualQuestions.length} questions in r/${subreddit}`);
+          console.log(`❓ Filtered to ${actualQuestions.length} questions in r/${subreddit}`);
           
-          // Process each question (limit to 2 per subreddit per cycle)
+          if (actualQuestions.length === 0) {
+            console.log(`⏭️ No questions detected in r/${subreddit}, skipping`);
+            continue;
+          }
+          
+          // Process each question (limit to 2 per subreddit per cycle to avoid spam)
           for (const question of actualQuestions.slice(0, 2)) {
             try {
-              console.log(`Processing question: ${question.title}`);
+              console.log(`🔄 Processing: "${question.title}" (ID: ${question.id})`);
               
               // Check if we've already answered this question
               const { data: existing } = await supabase
@@ -193,11 +214,11 @@ export const useBotOperations = () => {
                 .maybeSingle();
 
               if (existing) {
-                console.log(`Already answered question ${question.id}, skipping`);
+                console.log(`✅ Already answered question ${question.id}, skipping`);
                 continue;
               }
 
-              console.log('Generating answer with Gemini AI...');
+              console.log('🤖 Generating answer with Gemini AI...');
               
               // Generate answer using Gemini
               const aiResponse = await supabase.functions.invoke('gemini-ai', {
@@ -209,15 +230,20 @@ export const useBotOperations = () => {
               });
 
               if (aiResponse.error) {
-                console.error('Gemini AI error:', aiResponse.error);
-                continue;
+                console.error('❌ Gemini AI error:', aiResponse.error);
+                throw new Error(`AI generation failed: ${aiResponse.error.message}`);
               }
 
               const { answer } = aiResponse.data;
-              console.log('Generated answer:', answer?.substring(0, 100) + '...');
+              if (!answer) {
+                console.error('❌ No answer generated by AI');
+                throw new Error('AI did not generate an answer');
+              }
+              
+              console.log('✅ Generated answer:', answer.substring(0, 100) + '...');
 
               // Post comment to Reddit
-              console.log('Posting comment to Reddit...');
+              console.log('📤 Posting comment to Reddit...');
               const commentResponse = await supabase.functions.invoke('reddit-api', {
                 body: {
                   action: 'postComment',
@@ -232,9 +258,11 @@ export const useBotOperations = () => {
               if (!commentResponse.error && commentResponse.data?.success) {
                 commentId = commentResponse.data.commentId;
                 status = 'posted';
-                console.log('Successfully posted comment:', commentId);
+                console.log('🎉 Successfully posted comment:', commentId);
+                toast.success(`Answer posted to r/${subreddit}!`);
               } else {
-                console.error('Failed to post comment:', commentResponse.error);
+                console.error('❌ Failed to post comment:', commentResponse.error);
+                toast.error(`Failed to post answer: ${commentResponse.error?.message || 'Unknown error'}`);
               }
 
               // Save to database
@@ -254,9 +282,9 @@ export const useBotOperations = () => {
                 });
 
               if (saveError) {
-                console.error('Error saving answer:', saveError);
+                console.error('❌ Error saving answer:', saveError);
               } else {
-                console.log('Answer saved to database successfully');
+                console.log('💾 Answer saved to database successfully');
               }
 
               // Update session stats
@@ -270,13 +298,14 @@ export const useBotOperations = () => {
                 })
                 .eq('id', sessionId);
 
-              console.log(`Completed processing: ${question.title} - Status: ${status}`);
+              console.log(`✅ Completed processing: ${question.title} - Status: ${status}`);
 
-              // Add a small delay between processing questions
-              await new Promise(resolve => setTimeout(resolve, 2000));
+              // Add a delay between processing questions to be respectful
+              await new Promise(resolve => setTimeout(resolve, 5000));
 
             } catch (error) {
-              console.error('Error processing question:', error);
+              console.error('❌ Error processing question:', error);
+              toast.error(`Error processing question: ${error.message}`);
               
               // Update error count
               await supabase
@@ -288,18 +317,19 @@ export const useBotOperations = () => {
             }
           }
         } catch (error) {
-          console.error(`Error monitoring r/${subreddit}:`, error);
+          console.error(`❌ Error monitoring r/${subreddit}:`, error);
+          toast.error(`Error monitoring r/${subreddit}: ${error.message}`);
         }
       }
 
-      console.log('Monitoring cycle completed');
+      console.log('=== Monitoring cycle completed ===');
     };
 
     // Run immediately once
     monitorLoop();
     
-    // Then run every 90 seconds (increased from 60 to avoid rate limiting)
-    intervalRef.current = setInterval(monitorLoop, 90000);
+    // Then run every 2 minutes (increased from 90 seconds to be more respectful)
+    intervalRef.current = setInterval(monitorLoop, 120000);
   };
 
   // Fetch recent activities
