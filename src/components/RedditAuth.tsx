@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { MessageCircle, CheckCircle, XCircle } from "lucide-react";
+import { MessageCircle, CheckCircle, XCircle, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { useBotCredentials } from "@/hooks/useBotCredentials";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,6 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 const RedditAuth: React.FC = () => {
   const { user } = useAuth();
   const { credentials, updateCredentials, isRedditConnected, loading } = useBotCredentials();
+  const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
     clientId: '',
     clientSecret: '',
@@ -51,11 +52,29 @@ const RedditAuth: React.FC = () => {
 
     if (success) {
       toast.success("Reddit credentials saved successfully!");
+      setIsEditing(false);
     }
   };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleEditCredentials = () => {
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    // Reset form data to current credentials
+    if (credentials) {
+      setFormData({
+        clientId: credentials.reddit_client_id || '',
+        clientSecret: credentials.reddit_client_secret || '',
+        username: credentials.reddit_username || '',
+        password: credentials.reddit_password || ''
+      });
+    }
+    setIsEditing(false);
   };
 
   if (loading) {
@@ -95,7 +114,7 @@ const RedditAuth: React.FC = () => {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {!isRedditConnected() || !user ? (
+        {!isRedditConnected() || !user || isEditing ? (
           <>
             {!user && (
               <div className="text-center py-4 text-slate-400">
@@ -154,27 +173,41 @@ const RedditAuth: React.FC = () => {
               </div>
             </div>
             
-            <Button 
-              onClick={handleConnect} 
-              className="w-full bg-orange-600 hover:bg-orange-700"
-              disabled={!user}
-            >
-              <MessageCircle className="h-4 w-4 mr-2" />
-              {user ? 'Save Reddit Credentials' : 'Sign In to Connect Reddit'}
-            </Button>
+            <div className="flex space-x-2">
+              <Button 
+                onClick={handleConnect} 
+                className="flex-1 bg-orange-600 hover:bg-orange-700"
+                disabled={!user}
+              >
+                <MessageCircle className="h-4 w-4 mr-2" />
+                {user ? 'Save Reddit Credentials' : 'Sign In to Connect Reddit'}
+              </Button>
+              {isEditing && (
+                <Button 
+                  onClick={handleCancelEdit}
+                  variant="outline"
+                  className="text-slate-300 border-slate-600 hover:bg-slate-700"
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
           </>
         ) : (
           <div className="text-center py-4">
             <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
             <p className="text-green-400 font-medium">Successfully connected to Reddit</p>
-            <p className="text-slate-400 text-sm">Bot can now monitor subreddits and post answers</p>
-            <Button 
-              onClick={() => setFormData({ clientId: '', clientSecret: '', username: '', password: '' })}
-              variant="outline"
-              className="mt-4 text-slate-300 border-slate-600 hover:bg-slate-700"
-            >
-              Update Credentials
-            </Button>
+            <p className="text-slate-400 text-sm mb-4">Bot can now monitor subreddits and post answers</p>
+            <div className="flex space-x-2 justify-center">
+              <Button 
+                onClick={handleEditCredentials}
+                variant="outline"
+                className="text-slate-300 border-slate-600 hover:bg-slate-700"
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                Update Credentials
+              </Button>
+            </div>
           </div>
         )}
       </CardContent>
