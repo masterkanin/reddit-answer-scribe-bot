@@ -1,4 +1,3 @@
-
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -121,21 +120,69 @@ serve(async (req) => {
       
       // Parse the error for better user feedback
       let errorMessage = 'Failed to authenticate with Reddit';
+      let errorCode = 'UNKNOWN_ERROR';
+      let troubleshootingTips = [];
+      
       try {
         const errorData = JSON.parse(errorText);
         if (errorData.error === 'invalid_grant') {
-          errorMessage = 'Invalid Reddit username or password. Please check your credentials.';
+          errorCode = 'INVALID_GRANT';
+          errorMessage = 'Invalid Reddit username or password';
+          troubleshootingTips = [
+            'Double-check your Reddit username and password',
+            'If 2FA is enabled, use an app-specific password instead of your regular password',
+            'Make sure your Reddit account email is verified',
+            'New accounts may need to wait 24 hours before API access is available',
+            'Check if your account has been suspended or restricted'
+          ];
         } else if (errorData.error === 'unsupported_grant_type') {
-          errorMessage = 'Reddit app must be configured as "script" type. Please check your app settings at https://www.reddit.com/prefs/apps/';
+          errorCode = 'UNSUPPORTED_GRANT_TYPE';
+          errorMessage = 'Reddit app must be configured as "script" type';
+          troubleshootingTips = [
+            'Go to https://www.reddit.com/prefs/apps/',
+            'Make sure your app is configured as "script" type, not "web app"',
+            'Verify the redirect URI is set correctly'
+          ];
+        } else if (errorData.error === 'invalid_client') {
+          errorCode = 'INVALID_CLIENT';
+          errorMessage = 'Invalid Reddit app credentials';
+          troubleshootingTips = [
+            'Check that your Client ID and Client Secret are correct',
+            'Make sure you copied them exactly from https://www.reddit.com/prefs/apps/',
+            'Verify your app configuration is complete'
+          ];
         } else {
           errorMessage = `Reddit authentication error: ${errorData.error}`;
         }
       } catch (e) {
-        // If we can't parse the error, use the raw response
-        errorMessage = `Reddit authentication failed: ${errorText}`;
+        // If we can't parse the error, provide general troubleshooting
+        if (tokenResponse.status === 401) {
+          errorCode = 'UNAUTHORIZED';
+          errorMessage = 'Reddit rejected the credentials';
+          troubleshootingTips = [
+            'Verify your Reddit username and password are correct',
+            'Check if 2FA is enabled and use an app password',
+            'Ensure your Reddit account email is verified',
+            'New accounts may have temporary API restrictions'
+          ];
+        } else if (tokenResponse.status === 403) {
+          errorCode = 'FORBIDDEN';
+          errorMessage = 'Reddit account may be restricted or suspended';
+          troubleshootingTips = [
+            'Check if your Reddit account is in good standing',
+            'Verify your account is not shadowbanned',
+            'Make sure your account has sufficient karma/age for API access'
+          ];
+        }
       }
       
-      throw new Error(errorMessage);
+      throw new Error(JSON.stringify({
+        message: errorMessage,
+        code: errorCode,
+        troubleshooting: troubleshootingTips,
+        httpStatus: tokenResponse.status,
+        rawError: errorText
+      }));
     }
 
     const tokenData = await tokenResponse.json();
@@ -150,7 +197,42 @@ serve(async (req) => {
 
     let result;
 
-    if (action === 'getQuestions') {
+    if (action === 'testCredentials') {
+      console.log('Testing Reddit credentials...');
+      
+      // Test basic API access with the obtained token
+      const testResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'User-Agent': 'RedditQABot:v1.0.0 (by /u/' + reddit_username + ')',
+        },
+      });
+
+      if (!testResponse.ok) {
+        const testErrorText = await testResponse.text();
+        console.error('Reddit API test failed with status:', testResponse.status);
+        console.error('Reddit API test error response:', testErrorText);
+        throw new Error(`Reddit API test failed: ${testResponse.status} - ${testErrorText}`);
+      }
+
+      const userData = await testResponse.json();
+      console.log('Reddit API test successful, user data:', userData);
+      
+      result = { 
+        success: true, 
+        message: 'Reddit credentials are working correctly!',
+        userData: {
+          name: userData.name,
+          id: userData.id,
+          created_utc: userData.created_utc,
+          link_karma: userData.link_karma,
+          comment_karma: userData.comment_karma,
+          has_verified_email: userData.has_verified_email,
+          is_suspended: userData.is_suspended
+        }
+      };
+
+    } else if (action === 'getQuestions') {
       console.log(`Fetching posts from r/${subredditName}`);
       
       // Get new posts from subreddit with enhanced error handling
@@ -259,10 +341,23 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Reddit API error:', error);
-    return new Response(JSON.stringify({ 
+    
+    // Parse structured error messages
+    let errorResponse = { 
       error: error.message,
       details: 'Check the function logs for more information'
-    }), {
+    };
+    
+    try {
+      const parsedError = JSON.parse(error.message);
+      if (parsedError.code) {
+        errorResponse = parsedError;
+      }
+    } catch (e) {
+      // Not a structured error, use the original message
+    }
+    
+    return new Response(JSON.stringify(errorResponse), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
