@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle } from "lucide-react";
+import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle, Shield, AlertTriangle } from "lucide-react";
 import RedditAuth from "@/components/RedditAuth";
 import SubredditManager from "@/components/SubredditManager";
 import BotActivity from "@/components/BotActivity";
@@ -22,7 +22,7 @@ import { useBotOperations } from "@/hooks/useBotOperations";
 const Index = () => {
   const { user, signOut, loading: authLoading } = useAuth();
   const { credentials, updateCredentials, isRedditConnected, isGeminiConnected, loading: credentialsLoading } = useBotCredentials();
-  const { isRunning, startBot, stopBot } = useBotOperations();
+  const { isRunning, startBot, stopBot, dailyCommentCount, dailyLimit, isInCooldown, errorCount } = useBotOperations();
   const [subreddits, setSubreddits] = useState(['AskReddit', 'explainlikeimfive', 'NoStupidQuestions']);
   const [geminiApiKey, setGeminiApiKey] = useState('');
 
@@ -56,6 +56,11 @@ const Index = () => {
   const toggleBot = async () => {
     if (!user) {
       toast.error("Please sign in to control the bot");
+      return;
+    }
+    
+    if (isInCooldown) {
+      toast.error("Bot is in cooldown mode due to recent errors. Please wait before restarting.");
       return;
     }
     
@@ -100,7 +105,7 @@ const Index = () => {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-white">Reddit Q&A Bot</h1>
-              <p className="text-blue-200">AI-powered automatic question answering</p>
+              <p className="text-blue-200">AI-powered automatic question answering (Conservative Mode)</p>
             </div>
           </div>
           
@@ -111,16 +116,49 @@ const Index = () => {
                   <User className="h-4 w-4" />
                   <span className="text-sm">{user.email}</span>
                 </div>
+                
+                {/* Account Health Status */}
+                <div className="flex items-center space-x-2">
+                  {isInCooldown ? (
+                    <Badge variant="destructive" className="px-3 py-1">
+                      <AlertTriangle className="h-3 w-3 mr-1" />
+                      Cooldown
+                    </Badge>
+                  ) : errorCount > 0 ? (
+                    <Badge variant="secondary" className="px-3 py-1">
+                      <Shield className="h-3 w-3 mr-1" />
+                      {errorCount} Errors
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-green-600 px-3 py-1">
+                      <Shield className="h-3 w-3 mr-1" />
+                      Healthy
+                    </Badge>
+                  )}
+                </div>
+
                 <Badge variant={isRunning ? "default" : "secondary"} className="px-3 py-1">
                   {isRunning ? "🟢 Active" : "🔴 Inactive"}
                 </Badge>
+                
+                {/* Daily Progress */}
+                <div className="flex items-center space-x-2 text-white">
+                  <span className="text-sm">Daily: {dailyCommentCount}/{dailyLimit}</span>
+                  <div className="w-16 h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-blue-500 transition-all duration-300"
+                      style={{ width: `${Math.min((dailyCommentCount / dailyLimit) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+                
                 <Button 
                   onClick={toggleBot} 
-                  disabled={!isRedditConnected() || !isGeminiConnected() || subreddits.length === 0}
+                  disabled={!isRedditConnected() || !isGeminiConnected() || subreddits.length === 0 || isInCooldown}
                   className={`${isRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
                 >
                   <Zap className="h-4 w-4 mr-2" />
-                  {isRunning ? 'Stop Bot' : 'Start Bot'}
+                  {isRunning ? 'Stop Bot' : isInCooldown ? 'In Cooldown' : 'Start Bot'}
                 </Button>
                 <Button 
                   onClick={signOut}
@@ -146,10 +184,19 @@ const Index = () => {
           <div className="text-center py-16">
             <Bot className="h-24 w-24 text-blue-500 mx-auto mb-6" />
             <h2 className="text-2xl font-bold text-white mb-4">Welcome to Reddit Q&A Bot</h2>
-            <p className="text-slate-400 mb-8 max-w-2xl mx-auto">
+            <p className="text-slate-400 mb-4 max-w-2xl mx-auto">
               An AI-powered bot that monitors subreddits and automatically answers questions using Google Gemini. 
-              Sign in to set up your credentials and start monitoring subreddits.
             </p>
+            <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-8 max-w-2xl mx-auto">
+              <div className="flex items-center space-x-2 text-yellow-400 mb-2">
+                <Shield className="h-5 w-5" />
+                <span className="font-medium">Anti-Suspension Protection</span>
+              </div>
+              <p className="text-yellow-200 text-sm">
+                This bot operates in conservative mode with built-in rate limiting, daily comment limits, 
+                error detection, and human-like behavior patterns to prevent Reddit account suspension.
+              </p>
+            </div>
             <AuthDialog>
               <Button size="lg" className="bg-blue-600 hover:bg-blue-700">
                 <LogIn className="h-5 w-5 mr-2" />
@@ -176,6 +223,44 @@ const Index = () => {
             </TabsList>
 
             <TabsContent value="dashboard" className="space-y-6">
+              {/* Safety Status Card */}
+              <Card className="bg-slate-800 border-slate-700">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center space-x-2">
+                    <Shield className="h-5 w-5 text-green-500" />
+                    <span>Account Protection Status</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-white">{dailyCommentCount}/{dailyLimit}</div>
+                      <div className="text-sm text-slate-400">Daily Comments</div>
+                      <Progress value={(dailyCommentCount / dailyLimit) * 100} className="mt-2" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-white">{errorCount}</div>
+                      <div className="text-sm text-slate-400">Recent Errors</div>
+                      <div className={`text-sm mt-2 ${errorCount < 3 ? 'text-green-400' : 'text-red-400'}`}>
+                        {errorCount < 3 ? 'Healthy' : 'At Risk'}
+                      </div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-white">15min</div>
+                      <div className="text-sm text-slate-400">Check Interval</div>
+                      <div className="text-sm text-green-400 mt-2">Conservative</div>
+                    </div>
+                  </div>
+                  {isInCooldown && (
+                    <div className="mt-4 p-3 bg-red-900/30 border border-red-600 rounded-lg">
+                      <p className="text-red-400 text-sm">
+                        🛑 Bot is in 30-minute cooldown mode due to recent errors. This protects your account from suspension.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+              
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2">
                   <BotActivity isActive={isRunning} />
