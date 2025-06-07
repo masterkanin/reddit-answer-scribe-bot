@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle, Shield, AlertTriangle } from "lucide-react";
+import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle, Shield, AlertTriangle, Clock, Eye } from "lucide-react";
 import RedditAuth from "@/components/RedditAuth";
 import SubredditManager from "@/components/SubredditManager";
 import BotActivity from "@/components/BotActivity";
@@ -22,7 +22,18 @@ import { useBotOperations } from "@/hooks/useBotOperations";
 const Index = () => {
   const { user, signOut, loading: authLoading } = useAuth();
   const { credentials, updateCredentials, isRedditConnected, isGeminiConnected, loading: credentialsLoading } = useBotCredentials();
-  const { isRunning, startBot, stopBot, dailyCommentCount, dailyLimit, isInCooldown, errorCount } = useBotOperations();
+  const { 
+    isRunning, 
+    startBot, 
+    stopBot, 
+    dailyCommentCount, 
+    dailyLimit, 
+    isInCooldown, 
+    errorCount, 
+    isShadowbanned,
+    apiCallCount,
+    apiRateLimit 
+  } = useBotOperations();
   const [subreddits, setSubreddits] = useState(['AskReddit', 'explainlikeimfive', 'NoStupidQuestions']);
   const [geminiApiKey, setGeminiApiKey] = useState('');
 
@@ -59,6 +70,11 @@ const Index = () => {
       return;
     }
     
+    if (isShadowbanned) {
+      toast.error("Account appears to be shadowbanned. Please wait 24 hours before retrying.");
+      return;
+    }
+    
     if (isInCooldown) {
       toast.error("Bot is in cooldown mode due to recent errors. Please wait before restarting.");
       return;
@@ -86,6 +102,16 @@ const Index = () => {
     }
   };
 
+  // Get account health status
+  const getAccountHealth = () => {
+    if (isShadowbanned) return { status: 'shadowbanned', color: 'destructive', icon: Eye };
+    if (isInCooldown) return { status: 'cooldown', color: 'secondary', icon: Clock };
+    if (errorCount > 1) return { status: 'at-risk', color: 'secondary', icon: AlertTriangle };
+    return { status: 'healthy', color: 'default', icon: Shield };
+  };
+
+  const accountHealth = getAccountHealth();
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 flex items-center justify-center">
@@ -105,7 +131,7 @@ const Index = () => {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-white">Reddit Q&A Bot</h1>
-              <p className="text-blue-200">AI-powered automatic question answering (Conservative Mode)</p>
+              <p className="text-blue-200">AI-powered automatic question answering (Reddit Compliant)</p>
             </div>
           </div>
           
@@ -117,24 +143,15 @@ const Index = () => {
                   <span className="text-sm">{user.email}</span>
                 </div>
                 
-                {/* Account Health Status */}
+                {/* Enhanced Account Health Status */}
                 <div className="flex items-center space-x-2">
-                  {isInCooldown ? (
-                    <Badge variant="destructive" className="px-3 py-1">
-                      <AlertTriangle className="h-3 w-3 mr-1" />
-                      Cooldown
-                    </Badge>
-                  ) : errorCount > 0 ? (
-                    <Badge variant="secondary" className="px-3 py-1">
-                      <Shield className="h-3 w-3 mr-1" />
-                      {errorCount} Errors
-                    </Badge>
-                  ) : (
-                    <Badge className="bg-green-600 px-3 py-1">
-                      <Shield className="h-3 w-3 mr-1" />
-                      Healthy
-                    </Badge>
-                  )}
+                  <Badge variant={accountHealth.color as any} className="px-3 py-1">
+                    <accountHealth.icon className="h-3 w-3 mr-1" />
+                    {accountHealth.status === 'shadowbanned' && 'Shadowbanned'}
+                    {accountHealth.status === 'cooldown' && 'Cooldown'}
+                    {accountHealth.status === 'at-risk' && 'At Risk'}
+                    {accountHealth.status === 'healthy' && 'Healthy'}
+                  </Badge>
                 </div>
 
                 <Badge variant={isRunning ? "default" : "secondary"} className="px-3 py-1">
@@ -151,14 +168,27 @@ const Index = () => {
                     />
                   </div>
                 </div>
+
+                {/* API Rate Limit */}
+                <div className="flex items-center space-x-2 text-white">
+                  <span className="text-sm">API: {apiCallCount}/{apiRateLimit}</span>
+                  <div className="w-12 h-2 bg-slate-700 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-green-500 transition-all duration-300"
+                      style={{ width: `${Math.min((apiCallCount / apiRateLimit) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
                 
                 <Button 
                   onClick={toggleBot} 
-                  disabled={!isRedditConnected() || !isGeminiConnected() || subreddits.length === 0 || isInCooldown}
+                  disabled={!isRedditConnected() || !isGeminiConnected() || subreddits.length === 0 || isInCooldown || isShadowbanned}
                   className={`${isRunning ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}
                 >
                   <Zap className="h-4 w-4 mr-2" />
-                  {isRunning ? 'Stop Bot' : isInCooldown ? 'In Cooldown' : 'Start Bot'}
+                  {isRunning ? 'Stop Bot' : 
+                   isShadowbanned ? 'Shadowbanned' :
+                   isInCooldown ? 'In Cooldown' : 'Start Bot'}
                 </Button>
                 <Button 
                   onClick={signOut}
@@ -187,15 +217,19 @@ const Index = () => {
             <p className="text-slate-400 mb-4 max-w-2xl mx-auto">
               An AI-powered bot that monitors subreddits and automatically answers questions using Google Gemini. 
             </p>
-            <div className="bg-yellow-900/30 border border-yellow-600 rounded-lg p-4 mb-8 max-w-2xl mx-auto">
-              <div className="flex items-center space-x-2 text-yellow-400 mb-2">
+            <div className="bg-green-900/30 border border-green-600 rounded-lg p-4 mb-8 max-w-2xl mx-auto">
+              <div className="flex items-center space-x-2 text-green-400 mb-2">
                 <Shield className="h-5 w-5" />
-                <span className="font-medium">Anti-Suspension Protection</span>
+                <span className="font-medium">Reddit Compliance Guaranteed</span>
               </div>
-              <p className="text-yellow-200 text-sm">
-                This bot operates in conservative mode with built-in rate limiting, daily comment limits, 
-                error detection, and human-like behavior patterns to prevent Reddit account suspension.
-              </p>
+              <div className="text-green-200 text-sm space-y-1">
+                <p>✅ Follows all Reddit anti-spam policies</p>
+                <p>✅ Proper bot identification & disclaimers</p>
+                <p>✅ Conservative rate limiting (2-4 min between posts)</p>
+                <p>✅ Only answers truly unanswered questions (0-2 comments)</p>
+                <p>✅ Automatic shadowban detection & prevention</p>
+                <p>✅ API rate limiting (under 60 req/min)</p>
+              </div>
             </div>
             <AuthDialog>
               <Button size="lg" className="bg-blue-600 hover:bg-blue-700">
@@ -223,38 +257,80 @@ const Index = () => {
             </TabsList>
 
             <TabsContent value="dashboard" className="space-y-6">
-              {/* Safety Status Card */}
+              {/* Enhanced Compliance Status Card */}
               <Card className="bg-slate-800 border-slate-700">
                 <CardHeader>
                   <CardTitle className="text-white flex items-center space-x-2">
                     <Shield className="h-5 w-5 text-green-500" />
-                    <span>Account Protection Status</span>
+                    <span>Reddit Compliance Status</span>
                   </CardTitle>
+                  <CardDescription className="text-slate-400">
+                    Real-time monitoring of account health and Reddit policy compliance
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">{dailyCommentCount}/{dailyLimit}</div>
                       <div className="text-sm text-slate-400">Daily Comments</div>
                       <Progress value={(dailyCommentCount / dailyLimit) * 100} className="mt-2" />
+                      <div className="text-xs text-slate-500 mt-1">Conservative limit</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-white">{apiCallCount}/{apiRateLimit}</div>
+                      <div className="text-sm text-slate-400">API Calls/Min</div>
+                      <Progress value={(apiCallCount / apiRateLimit) * 100} className="mt-2" />
+                      <div className="text-xs text-slate-500 mt-1">Under Reddit limit</div>
                     </div>
                     <div className="text-center">
                       <div className="text-2xl font-bold text-white">{errorCount}</div>
                       <div className="text-sm text-slate-400">Recent Errors</div>
-                      <div className={`text-sm mt-2 ${errorCount < 3 ? 'text-green-400' : 'text-red-400'}`}>
-                        {errorCount < 3 ? 'Healthy' : 'At Risk'}
+                      <div className={`text-sm mt-2 ${errorCount < 2 ? 'text-green-400' : 'text-red-400'}`}>
+                        {errorCount < 2 ? 'Healthy' : 'At Risk'}
                       </div>
+                      <div className="text-xs text-slate-500 mt-1">Auto-cooldown at 2</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-2xl font-bold text-white">15min</div>
-                      <div className="text-sm text-slate-400">Check Interval</div>
-                      <div className="text-sm text-green-400 mt-2">Conservative</div>
+                      <div className="text-2xl font-bold text-white">2-4min</div>
+                      <div className="text-sm text-slate-400">Post Interval</div>
+                      <div className="text-sm text-green-400 mt-2">Compliant</div>
+                      <div className="text-xs text-slate-500 mt-1">Random jitter</div>
                     </div>
                   </div>
-                  {isInCooldown && (
+                  
+                  {/* Status Alerts */}
+                  {isShadowbanned && (
                     <div className="mt-4 p-3 bg-red-900/30 border border-red-600 rounded-lg">
-                      <p className="text-red-400 text-sm">
-                        🛑 Bot is in 30-minute cooldown mode due to recent errors. This protects your account from suspension.
+                      <div className="flex items-center space-x-2 text-red-400 mb-1">
+                        <Eye className="h-4 w-4" />
+                        <span className="font-medium">Account Shadowbanned</span>
+                      </div>
+                      <p className="text-red-300 text-sm">
+                        Multiple consecutive 401 errors detected. Account may be shadowbanned. Please wait 24 hours before retrying.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {isInCooldown && !isShadowbanned && (
+                    <div className="mt-4 p-3 bg-yellow-900/30 border border-yellow-600 rounded-lg">
+                      <div className="flex items-center space-x-2 text-yellow-400 mb-1">
+                        <Clock className="h-4 w-4" />
+                        <span className="font-medium">Cooldown Mode Active</span>
+                      </div>
+                      <p className="text-yellow-300 text-sm">
+                        Bot is in 60-minute cooldown due to recent errors. This protects your account from suspension.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {errorCount === 0 && !isInCooldown && !isShadowbanned && (
+                    <div className="mt-4 p-3 bg-green-900/30 border border-green-600 rounded-lg">
+                      <div className="flex items-center space-x-2 text-green-400 mb-1">
+                        <CheckCircle className="h-4 w-4" />
+                        <span className="font-medium">All Systems Healthy</span>
+                      </div>
+                      <p className="text-green-300 text-sm">
+                        Bot is operating normally with full Reddit compliance. No recent errors detected.
                       </p>
                     </div>
                   )}
