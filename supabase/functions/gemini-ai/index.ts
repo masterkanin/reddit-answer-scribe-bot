@@ -124,13 +124,15 @@ serve(async (req) => {
 Question Title: ${title}
 Question: ${question}
 
-Please provide a helpful, accurate, and well-formatted answer. Keep it concise but informative. Use a friendly, conversational tone that fits Reddit's culture. If the question is complex, break down your answer into clear points. Avoid being overly formal or corporate-sounding.
+Please provide a helpful, accurate answer. Write in a conversational tone that fits Reddit's culture. Keep your response to maximum 10 lines. Do NOT use bullet points or numbered lists. Write in paragraph format with natural flow.
 
-Important guidelines:
-- Be factual and accurate
-- Acknowledge if you're uncertain about something
-- Use line breaks for readability
-- Keep it under 500 words unless the question really needs a longer answer
+At the end of your response, add a brief summary line starting with "TL;DR:" that captures the main point in one sentence.
+
+Guidelines:
+- Be factual and acknowledge uncertainty when needed
+- Keep it concise and under 10 lines
+- Use natural paragraph format, no bullet points
+- End with a TL;DR summary
 - Don't mention that you're an AI unless specifically relevant`;
 
     console.log('🤖 Calling Gemini API with model: gemini-1.5-flash...');
