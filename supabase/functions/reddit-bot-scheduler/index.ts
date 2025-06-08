@@ -8,15 +8,53 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
 serve(async (req) => {
+  console.log(`🚀 Reddit Bot Scheduler invoked at: ${new Date().toISOString()}`);
+  console.log(`📝 Request method: ${req.method}`);
+  console.log(`📝 Request URL: ${req.url}`);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Health check endpoint
+  const url = new URL(req.url);
+  if (url.pathname === '/health') {
+    console.log('🏥 Health check requested');
+    return new Response(JSON.stringify({ 
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      version: '1.0.0'
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   try {
+    // Check environment variables
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    console.log(`🔑 Environment check:`);
+    console.log(`- SUPABASE_URL: ${supabaseUrl ? 'SET' : 'MISSING'}`);
+    console.log(`- SUPABASE_SERVICE_ROLE_KEY: ${supabaseServiceKey ? 'SET (length: ' + supabaseServiceKey.length + ')' : 'MISSING'}`);
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      const errorMsg = 'Missing required environment variables';
+      console.error(`❌ ${errorMsg}`);
+      return new Response(JSON.stringify({ 
+        error: errorMsg,
+        missing: {
+          SUPABASE_URL: !supabaseUrl,
+          SUPABASE_SERVICE_ROLE_KEY: !supabaseServiceKey
+        },
+        timestamp: new Date().toISOString()
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     console.log('🚀 Reddit Bot Scheduler started at:', new Date().toISOString());
 
     // Create admin Supabase client
@@ -26,6 +64,8 @@ serve(async (req) => {
         autoRefreshToken: false
       },
     });
+
+    console.log('✅ Supabase client created successfully');
 
     // First, clean up old failed sessions (older than 1 hour with errors)
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
@@ -46,6 +86,7 @@ serve(async (req) => {
     }
 
     // Get all active bot sessions
+    console.log('📊 Fetching active bot sessions...');
     const { data: activeSessions, error: sessionsError } = await supabase
       .from('bot_sessions')
       .select(`
@@ -467,6 +508,7 @@ serve(async (req) => {
     
     return new Response(JSON.stringify({ 
       error: error.message,
+      stack: error.stack,
       timestamp: new Date().toISOString()
     }), {
       status: 500,
