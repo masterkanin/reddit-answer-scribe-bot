@@ -38,18 +38,12 @@ export const useBotOperations = () => {
   const [dailyCommentCount, setDailyCommentCount] = useState(0);
   const [errorCount, setErrorCount] = useState(0);
   const [lastErrorTime, setLastErrorTime] = useState<Date | null>(null);
-  const [apiCallCount, setApiCallCount] = useState(0);
-  const [lastApiReset, setLastApiReset] = useState(Date.now());
-  const [isShadowbanned, setIsShadowbanned] = useState(false);
 
   // REDDIT COMPLIANCE: Conservative limits
   const DAILY_COMMENT_LIMIT = 5;
   const HOURLY_COMMENT_LIMIT = 2;
   const MAX_ERRORS_BEFORE_COOLDOWN = 2;
   const COOLDOWN_DURATION = 60 * 60 * 1000; // 60 minutes
-  const API_RATE_LIMIT = 50;
-  const API_RESET_INTERVAL = 60 * 1000;
-  const SHADOWBAN_DETECTION_THRESHOLD = 5;
 
   // Check if we're in cooldown period due to errors
   const isInCooldown = () => {
@@ -106,12 +100,6 @@ export const useBotOperations = () => {
       return false;
     }
 
-    // Check for shadowban
-    if (isShadowbanned) {
-      toast.error('Account appears to be shadowbanned. Please wait 24 hours before retrying.');
-      return false;
-    }
-
     // Check if we're in cooldown
     if (isInCooldown()) {
       const remainingTime = Math.ceil((COOLDOWN_DURATION - (Date.now() - (lastErrorTime?.getTime() || 0))) / 60000);
@@ -122,12 +110,22 @@ export const useBotOperations = () => {
     try {
       console.log('🚀 Starting server-side automated bot session for user:', user.id);
       
+      // First, clean up any existing active sessions for this user
+      await supabase
+        .from('bot_sessions')
+        .update({ is_active: false, session_end: new Date().toISOString() })
+        .eq('user_id', user.id)
+        .eq('is_active', true);
+
       // Create new session
       const { data: session, error } = await supabase
         .from('bot_sessions')
         .insert({
           user_id: user.id,
           is_active: true,
+          error_count: 0, // Reset error count
+          questions_processed: 0,
+          successful_answers: 0
         })
         .select()
         .single();
@@ -142,9 +140,9 @@ export const useBotOperations = () => {
       setCurrentSession(session);
       setIsRunning(true);
 
-      // Reset error count and shadowban status
+      // Reset error tracking
       setErrorCount(0);
-      setIsShadowbanned(false);
+      setLastErrorTime(null);
 
       // Save monitored subreddits to database
       for (const subredditName of subreddits) {
@@ -159,8 +157,7 @@ export const useBotOperations = () => {
           });
       }
       
-      toast.success('🤖 Server-side Reddit bot started! It will run automatically even when you close this page.');
-      toast.info('📊 The bot runs on Supabase servers and will check for questions every 3-5 minutes.');
+      toast.success('🤖 Reddit bot started! It will run automatically and check for questions every 4 minutes.');
       return true;
     } catch (error) {
       console.error('Error starting bot:', error);
@@ -191,7 +188,7 @@ export const useBotOperations = () => {
 
       setCurrentSession(null);
       setIsRunning(false);
-      toast.success('Server-side bot stopped');
+      toast.success('Bot stopped');
     } catch (error) {
       console.error('Error stopping bot:', error);
       toast.error('Failed to stop bot');
@@ -239,6 +236,7 @@ export const useBotOperations = () => {
         if (activeSession) {
           setCurrentSession(activeSession);
           setIsRunning(true);
+          setErrorCount(activeSession.error_count);
           console.log('Found active server-side session:', activeSession.id);
         }
       } catch (error) {
@@ -275,7 +273,7 @@ export const useBotOperations = () => {
           console.log('New question answered:', payload);
           fetchRecentActivities();
           checkDailyLimits();
-          toast.success('✅ New answer posted by server-side bot!');
+          toast.success('✅ New answer posted by bot!');
         }
       )
       .subscribe();
@@ -284,6 +282,36 @@ export const useBotOperations = () => {
       supabase.removeChannel(channel);
     };
   }, [user]);
+
+  // Set up real-time updates for session changes
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('bot-session-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bot_sessions',
+          filter: `user_id=eq.${user.id}`
+        },
+        (payload) => {
+          console.log('Bot session updated:', payload);
+          const updatedSession = payload.new as BotSession;
+          if (updatedSession.is_active && currentSession?.id === updatedSession.id) {
+            setCurrentSession(updatedSession);
+            setErrorCount(updatedSession.error_count);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, currentSession]);
 
   return {
     currentSession,
@@ -296,8 +324,5 @@ export const useBotOperations = () => {
     dailyLimit: DAILY_COMMENT_LIMIT,
     isInCooldown: isInCooldown(),
     errorCount,
-    isShadowbanned,
-    apiCallCount,
-    apiRateLimit: API_RATE_LIMIT,
   };
 };
