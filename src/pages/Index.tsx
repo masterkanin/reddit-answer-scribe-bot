@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle, Shield, AlertTriangle, Clock, Eye } from "lucide-react";
+import { Bot, Activity, Settings, Plus, Trash2, MessageCircle, Zap, LogIn, LogOut, User, CheckCircle, XCircle, Shield, AlertTriangle, Clock, Eye, Edit } from "lucide-react";
 import RedditAuth from "@/components/RedditAuth";
 import SubredditManager from "@/components/SubredditManager";
 import BotActivity from "@/components/BotActivity";
@@ -36,6 +36,7 @@ const Index = () => {
   } = useBotOperations();
   const [subreddits, setSubreddits] = useState(['AskReddit', 'explainlikeimfive', 'NoStupidQuestions']);
   const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [isEditingGeminiKey, setIsEditingGeminiKey] = useState(false);
 
   // Sync Gemini API key with credentials
   useEffect(() => {
@@ -61,7 +62,27 @@ const Index = () => {
 
     if (success) {
       toast.success("Gemini API key saved successfully!");
+      setIsEditingGeminiKey(false);
     }
+  };
+
+  const handleUpdateGeminiKey = () => {
+    setIsEditingGeminiKey(true);
+    setGeminiApiKey(''); // Clear for new input
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditingGeminiKey(false);
+    // Restore original key
+    if (credentials?.gemini_api_key) {
+      setGeminiApiKey(credentials.gemini_api_key);
+    }
+  };
+
+  const getMaskedKey = (key: string) => {
+    if (!key) return '';
+    if (key.length <= 8) return '***';
+    return key.substring(0, 4) + '***' + key.substring(key.length - 4);
   };
 
   const toggleBot = async () => {
@@ -386,44 +407,80 @@ const Index = () => {
                   <CardContent className="space-y-4">
                     {credentialsLoading ? (
                       <div className="text-center text-slate-400">Loading...</div>
-                    ) : !isGeminiConnected() || !user ? (
+                    ) : !isGeminiConnected() || !user || isEditingGeminiKey ? (
                       <>
-                        {!user && (
+                        {!user && !isEditingGeminiKey && (
                           <div className="text-center py-4 text-slate-400">
                             Please sign in to save your Gemini API key
                           </div>
                         )}
-                        <div className="space-y-2">
-                          <Label htmlFor="gemini-key" className="text-slate-300">Gemini API Key</Label>
-                          <Input 
-                            id="gemini-key"
-                            placeholder="Enter your Gemini API key" 
-                            type="password"
-                            value={geminiApiKey}
-                            onChange={(e) => setGeminiApiKey(e.target.value)}
-                            className="bg-slate-700 border-slate-600 text-white"
-                            disabled={!user}
-                          />
-                        </div>
-                        <Button 
-                          onClick={handleSaveGeminiKey}
-                          className="w-full bg-green-600 hover:bg-green-700"
-                          disabled={!user || !geminiApiKey.trim()}
-                        >
-                          <Zap className="h-4 w-4 mr-2" />
-                          {user ? 'Save API Key' : 'Sign In to Connect Gemini'}
-                        </Button>
+                        
+                        {(user && (!isGeminiConnected() || isEditingGeminiKey)) && (
+                          <>
+                            <div className="space-y-2">
+                              <Label htmlFor="gemini-key" className="text-slate-300">
+                                {isEditingGeminiKey ? 'New Gemini API Key' : 'Gemini API Key'}
+                              </Label>
+                              <Input 
+                                id="gemini-key"
+                                placeholder="Enter your Gemini API key" 
+                                type="password"
+                                value={geminiApiKey}
+                                onChange={(e) => setGeminiApiKey(e.target.value)}
+                                className="bg-slate-700 border-slate-600 text-white"
+                              />
+                              {isEditingGeminiKey && (
+                                <p className="text-xs text-slate-400">
+                                  Current key: {getMaskedKey(credentials?.gemini_api_key || '')}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex space-x-2">
+                              <Button 
+                                onClick={handleSaveGeminiKey}
+                                className="flex-1 bg-green-600 hover:bg-green-700"
+                                disabled={!geminiApiKey.trim()}
+                              >
+                                <Zap className="h-4 w-4 mr-2" />
+                                {isEditingGeminiKey ? 'Update API Key' : 'Save API Key'}
+                              </Button>
+                              {isEditingGeminiKey && (
+                                <Button 
+                                  onClick={handleCancelEdit}
+                                  variant="outline"
+                                  className="text-slate-300 border-slate-600 hover:bg-slate-700"
+                                >
+                                  Cancel
+                                </Button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                        
+                        {!user && (
+                          <Button 
+                            disabled
+                            className="w-full bg-gray-600"
+                          >
+                            <Zap className="h-4 w-4 mr-2" />
+                            Sign In to Connect Gemini
+                          </Button>
+                        )}
                       </>
                     ) : (
                       <div className="text-center py-4">
                         <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
                         <p className="text-green-400 font-medium">Successfully connected to Gemini AI</p>
-                        <p className="text-slate-400 text-sm">Bot can now generate intelligent answers</p>
+                        <p className="text-slate-400 text-sm mb-3">
+                          Key: {getMaskedKey(credentials?.gemini_api_key || '')}
+                        </p>
+                        <p className="text-slate-400 text-sm mb-4">Bot can now generate intelligent answers</p>
                         <Button 
-                          onClick={() => setGeminiApiKey('')}
+                          onClick={handleUpdateGeminiKey}
                           variant="outline"
-                          className="mt-4 text-slate-300 border-slate-600 hover:bg-slate-700"
+                          className="text-slate-300 border-slate-600 hover:bg-slate-700"
                         >
+                          <Edit className="h-4 w-4 mr-2" />
                           Update API Key
                         </Button>
                       </div>
