@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -355,7 +354,7 @@ export const useBotOperations = () => {
     fetchRecentActivities,
     dailyCommentCount,
     dailyLimit: DAILY_COMMENT_LIMIT,
-    isInCooldown, // This is now a boolean state, not a function
+    isInCooldown,
     errorCount,
     isShadowbanned,
     apiCallCount,
