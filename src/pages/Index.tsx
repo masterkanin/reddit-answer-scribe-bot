@@ -18,6 +18,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useBotCredentials } from "@/hooks/useBotCredentials";
 import { useBotOperations } from "@/hooks/useBotOperations";
 import GeminiTest from "@/components/GeminiTest";
+import GeminiDiagnostic from "@/components/GeminiDiagnostic";
 
 const Index = () => {
   const { user, signOut, loading: authLoading } = useAuth();
@@ -492,6 +493,7 @@ const Index = () => {
               {/* Add testing components */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
                 <GeminiTest />
+                <GeminiDiagnostic />
               </div>
             </TabsContent>
           </Tabs>
