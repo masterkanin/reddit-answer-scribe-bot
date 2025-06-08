@@ -38,12 +38,15 @@ export const useBotOperations = () => {
   const [dailyCommentCount, setDailyCommentCount] = useState(0);
   const [errorCount, setErrorCount] = useState(0);
   const [lastErrorTime, setLastErrorTime] = useState<Date | null>(null);
+  const [isShadowbanned, setIsShadowbanned] = useState(false);
+  const [apiCallCount, setApiCallCount] = useState(0);
 
   // REDDIT COMPLIANCE: Conservative limits
   const DAILY_COMMENT_LIMIT = 5;
   const HOURLY_COMMENT_LIMIT = 2;
   const MAX_ERRORS_BEFORE_COOLDOWN = 2;
   const COOLDOWN_DURATION = 60 * 60 * 1000; // 60 minutes
+  const API_RATE_LIMIT = 50; // Conservative API rate limit per minute
 
   // Check if we're in cooldown period due to errors
   const isInCooldown = () => {
@@ -143,6 +146,8 @@ export const useBotOperations = () => {
       // Reset error tracking
       setErrorCount(0);
       setLastErrorTime(null);
+      setIsShadowbanned(false);
+      setApiCallCount(0);
 
       // Save monitored subreddits to database
       for (const subredditName of subreddits) {
@@ -213,6 +218,12 @@ export const useBotOperations = () => {
       }
 
       setRecentActivities(data || []);
+
+      // Check for shadowban patterns
+      const recentFailures = (data || []).slice(0, 5).filter(item => item.status === 'failed');
+      if (recentFailures.length >= 3) {
+        setIsShadowbanned(true);
+      }
     } catch (error) {
       console.error('Error fetching activities:', error);
     }
@@ -252,6 +263,8 @@ export const useBotOperations = () => {
       setRecentActivities([]);
       setCurrentSession(null);
       setIsRunning(false);
+      setIsShadowbanned(false);
+      setApiCallCount(0);
     }
   }, [user]);
 
@@ -313,6 +326,15 @@ export const useBotOperations = () => {
     };
   }, [user, currentSession]);
 
+  // Reset API call count every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setApiCallCount(0);
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   return {
     currentSession,
     isRunning,
@@ -324,5 +346,8 @@ export const useBotOperations = () => {
     dailyLimit: DAILY_COMMENT_LIMIT,
     isInCooldown: isInCooldown(),
     errorCount,
+    isShadowbanned,
+    apiCallCount,
+    apiRateLimit: API_RATE_LIMIT,
   };
 };
