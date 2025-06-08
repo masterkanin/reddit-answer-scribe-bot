@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -75,7 +76,11 @@ const Index = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="text-center">
-                <AuthDialog />
+                <AuthDialog>
+                  <Button className="bg-blue-600 hover:bg-blue-700">
+                    Sign In / Sign Up
+                  </Button>
+                </AuthDialog>
               </CardContent>
             </Card>
           </div>
