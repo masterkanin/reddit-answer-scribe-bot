@@ -19,10 +19,6 @@ serve(async (req) => {
   try {
     console.log('🤖 Gemini AI function called');
     
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: { persistSession: false },
-    });
-
     // Enhanced authentication debugging
     const authHeader = req.headers.get('Authorization');
     console.log('Auth header present:', !!authHeader);
@@ -36,13 +32,16 @@ serve(async (req) => {
     console.log('Token length:', token.length);
     console.log('Token prefix:', token.substring(0, 20) + '...');
 
-    // Get user with enhanced error handling
+    // Create Supabase client and set the auth context
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false },
+    });
+
+    // Set the auth context by setting the session with the user's token
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
     if (userError) {
       console.error('❌ User authentication error:', userError);
-      console.error('Error code:', userError.status);
-      console.error('Error message:', userError.message);
       throw new Error(`Authentication failed: ${userError.message}`);
     }
 
@@ -54,7 +53,14 @@ serve(async (req) => {
     console.log('✅ User authenticated successfully');
     console.log('User ID:', user.id);
     console.log('User email:', user.email);
-    console.log('User created at:', user.created_at);
+
+    // CRITICAL FIX: Set the auth session on the client to ensure RLS works
+    await supabase.auth.setSession({
+      access_token: token,
+      refresh_token: '',
+    });
+
+    console.log('✅ Auth session set on Supabase client');
 
     const { question, title, subreddit } = await req.json();
     console.log('Request data:', { 
@@ -63,27 +69,10 @@ serve(async (req) => {
       subreddit: subreddit 
     });
 
-    // Enhanced database query with better debugging
+    // Enhanced database query with proper auth context
     console.log('🔍 Fetching Gemini API key for user:', user.id);
     
-    // First, check if user exists in bot_credentials table at all
-    const { data: userCheck, error: userCheckError } = await supabase
-      .from('bot_credentials')
-      .select('user_id')
-      .eq('user_id', user.id);
-
-    console.log('User existence check:', {
-      found: userCheck?.length || 0,
-      error: userCheckError?.message,
-      userId: user.id
-    });
-
-    if (userCheckError) {
-      console.error('❌ Database error checking user existence:', userCheckError);
-      throw new Error(`Database error: ${userCheckError.message}`);
-    }
-
-    // Now get the credentials with enhanced error handling
+    // Now query with the properly authenticated client
     const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
       .select('gemini_api_key, user_id, created_at, updated_at')
@@ -108,15 +97,6 @@ serve(async (req) => {
 
     if (!credentials) {
       console.error('❌ No credentials record found for user:', user.id);
-      
-      // Try to get all records for debugging (remove user filter)
-      const { data: allCreds, error: allCredsError } = await supabase
-        .from('bot_credentials')
-        .select('user_id')
-        .limit(5);
-      
-      console.log('Debug - Sample user IDs in bot_credentials:', allCreds?.map(c => c.user_id));
-      
       throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
     }
 
@@ -170,13 +150,11 @@ Important guidelines:
     });
 
     console.log('Gemini API response status:', geminiResponse.status);
-    console.log('Gemini API response headers:', Object.fromEntries(geminiResponse.headers.entries()));
 
     if (!geminiResponse.ok) {
       const errorText = await geminiResponse.text();
       console.error('❌ Gemini API error response:', errorText);
       
-      // Check for specific API key errors
       if (geminiResponse.status === 400 && errorText.includes('API_KEY_INVALID')) {
         throw new Error('Invalid Gemini API key. Please check your API key in settings.');
       }
@@ -209,9 +187,7 @@ Important guidelines:
   } catch (error) {
     console.error('❌ Gemini AI function error:', error.message);
     console.error('Full error details:', error);
-    console.error('Error stack:', error.stack);
     
-    // Return detailed error information for debugging
     return new Response(JSON.stringify({ 
       error: error.message,
       details: 'Check the function logs for more information',

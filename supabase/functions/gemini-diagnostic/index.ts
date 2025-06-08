@@ -23,9 +23,10 @@ serve(async (req) => {
       step1_auth_header: null,
       step2_supabase_client: null,
       step3_user_auth: null,
-      step4_db_connection: null,
-      step5_credentials_query: null,
-      step6_raw_query: null,
+      step4_auth_session_set: null,
+      step5_db_connection: null,
+      step6_credentials_query: null,
+      step7_raw_query: null,
     };
 
     // Step 1: Check auth header
@@ -68,21 +69,40 @@ serve(async (req) => {
       throw new Error(`User auth failed: ${userError?.message}`);
     }
 
-    // Step 4: Test basic database connection
+    // Step 4: Set auth session (NEW STEP)
+    try {
+      await supabase.auth.setSession({
+        access_token: token,
+        refresh_token: '',
+      });
+      results.step4_auth_session_set = {
+        success: true,
+        error: null,
+      };
+      console.log('Step 4 - Auth session set successfully');
+    } catch (sessionError) {
+      results.step4_auth_session_set = {
+        success: false,
+        error: sessionError.message,
+      };
+      console.error('Step 4 - Failed to set auth session:', sessionError);
+    }
+
+    // Step 5: Test basic database connection
     const { data: testData, error: testError } = await supabase
       .from('profiles')
       .select('id')
       .limit(1);
     
-    results.step4_db_connection = {
+    results.step5_db_connection = {
       success: !testError,
       error: testError?.message || null,
       profiles_accessible: !!testData,
     };
-    console.log('Step 4 - DB connection:', results.step4_db_connection);
+    console.log('Step 5 - DB connection:', results.step5_db_connection);
 
-    // Step 5: Try to query bot_credentials with detailed logging
-    console.log('Step 5 - Attempting bot_credentials query for user:', user.id);
+    // Step 6: Try to query bot_credentials with auth context
+    console.log('Step 6 - Attempting bot_credentials query with auth context for user:', user.id);
     
     const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
@@ -90,7 +110,7 @@ serve(async (req) => {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    results.step5_credentials_query = {
+    results.step6_credentials_query = {
       success: !credError,
       has_data: !!credentials,
       user_id_match: credentials?.user_id === user.id,
@@ -99,15 +119,15 @@ serve(async (req) => {
       created_at: credentials?.created_at || null,
       error: credError?.message || null,
     };
-    console.log('Step 5 - Credentials query:', results.step5_credentials_query);
+    console.log('Step 6 - Credentials query with auth context:', results.step6_credentials_query);
 
-    // Step 6: Raw query to check if ANY records exist
+    // Step 7: Raw query to check if ANY records exist (for debugging)
     const { data: allCreds, error: allCredsError } = await supabase
       .from('bot_credentials')
       .select('user_id, created_at')
       .limit(5);
     
-    results.step6_raw_query = {
+    results.step7_raw_query = {
       success: !allCredsError,
       total_records: allCreds?.length || 0,
       sample_user_ids: allCreds?.map(c => c.user_id) || [],
@@ -115,27 +135,30 @@ serve(async (req) => {
       user_id_exists_in_table: allCreds?.some(c => c.user_id === user.id) || false,
       error: allCredsError?.message || null,
     };
-    console.log('Step 6 - Raw query:', results.step6_raw_query);
+    console.log('Step 7 - Raw query:', results.step7_raw_query);
 
     // Final analysis
     const analysis = {
       auth_working: results.step3_user_auth.success,
-      db_working: results.step4_db_connection.success,
-      user_has_credentials: results.step5_credentials_query.has_data,
-      credentials_accessible: results.step5_credentials_query.success,
+      auth_session_set: results.step4_auth_session_set.success,
+      db_working: results.step5_db_connection.success,
+      user_has_credentials: results.step6_credentials_query.has_data,
+      credentials_accessible: results.step6_credentials_query.success,
       likely_issue: null as string | null,
     };
 
     if (!analysis.auth_working) {
       analysis.likely_issue = 'Authentication token is invalid or expired';
+    } else if (!analysis.auth_session_set) {
+      analysis.likely_issue = 'Failed to set auth session on Supabase client';
     } else if (!analysis.db_working) {
       analysis.likely_issue = 'Database connection or permissions issue';
     } else if (!analysis.credentials_accessible) {
       analysis.likely_issue = 'RLS policies blocking access to bot_credentials table';
     } else if (!analysis.user_has_credentials) {
-      analysis.likely_issue = 'User has no credentials record in database';
+      analysis.likely_issue = 'User has no credentials record in database (but auth context should now work)';
     } else {
-      analysis.likely_issue = 'Unknown - all steps passed';
+      analysis.likely_issue = 'All systems working - authentication context fixed!';
     }
 
     console.log('Final analysis:', analysis);
