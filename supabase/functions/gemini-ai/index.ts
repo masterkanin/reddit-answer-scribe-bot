@@ -19,7 +19,7 @@ serve(async (req) => {
   try {
     console.log('🤖 Gemini AI function called');
     
-    // Enhanced authentication debugging
+    // Get authorization header
     const authHeader = req.headers.get('Authorization');
     console.log('Auth header present:', !!authHeader);
     
@@ -30,9 +30,8 @@ serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '');
     console.log('Token length:', token.length);
-    console.log('Token prefix:', token.substring(0, 20) + '...');
 
-    // Create Supabase client with enhanced configuration
+    // Create Supabase client
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { 
         persistSession: false,
@@ -41,7 +40,7 @@ serve(async (req) => {
       },
     });
 
-    // Step 1: Authenticate user and get user info
+    // Step 1: Authenticate user
     console.log('🔐 Step 1: Authenticating user...');
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
@@ -59,21 +58,7 @@ serve(async (req) => {
     console.log('User ID:', user.id);
     console.log('User email:', user.email);
 
-    // Step 2: Set the auth session on the client
-    console.log('🔑 Step 2: Setting auth session...');
-    const { error: sessionError } = await supabase.auth.setSession({
-      access_token: token,
-      refresh_token: '',
-    });
-
-    if (sessionError) {
-      console.error('❌ Failed to set auth session:', sessionError);
-      throw new Error(`Session setup failed: ${sessionError.message}`);
-    }
-
-    console.log('✅ Auth session set on Supabase client');
-
-    // Step 3: Get request data
+    // Step 2: Get request data
     const { question, title, subreddit } = await req.json();
     console.log('📝 Request data:', { 
       hasQuestion: !!question, 
@@ -81,107 +66,59 @@ serve(async (req) => {
       subreddit: subreddit 
     });
 
-    // Step 4: Enhanced credentials retrieval with multiple attempts
-    console.log('🔍 Step 4: Fetching Gemini API key for user:', user.id);
+    // Step 3: Create admin client for credential access
+    console.log('🔑 Step 3: Creating admin client for credential access...');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
-    let credentials = null;
-    let credError = null;
+    if (!supabaseServiceKey) {
+      console.error('❌ Missing service role key');
+      throw new Error('Service configuration error');
+    }
 
-    // First attempt: Standard query with detailed logging
-    console.log('🔍 Attempt 1: Standard query...');
-    const result1 = await supabase
-      .from('bot_credentials')
-      .select('gemini_api_key, user_id, created_at, updated_at')
-      .eq('user_id', user.id);
-
-    console.log('Query result 1:', {
-      data: result1.data,
-      error: result1.error,
-      count: result1.data?.length || 0
+    const adminSupabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: { 
+        persistSession: false,
+        autoRefreshToken: false
+      },
     });
 
-    if (result1.error) {
-      credError = result1.error;
-      console.error('❌ First query failed:', result1.error);
-    } else if (result1.data && result1.data.length > 0) {
-      credentials = result1.data[0];
-      console.log('✅ Credentials found on first attempt');
-    }
+    // Step 4: Fetch credentials using admin client
+    console.log('🔍 Step 4: Fetching Gemini API key for user:', user.id);
+    
+    const { data: credentials, error: credError } = await adminSupabase
+      .from('bot_credentials')
+      .select('gemini_api_key, user_id, created_at, updated_at')
+      .eq('user_id', user.id)
+      .single();
 
-    // Second attempt: If first failed, try with a fresh client instance
-    if (!credentials && !credError) {
-      console.log('🔍 Attempt 2: Fresh client query...');
-      
-      // Create a completely fresh client instance
-      const freshSupabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { persistSession: false },
-      });
-
-      // Re-authenticate with the fresh client
-      await freshSupabase.auth.setSession({
-        access_token: token,
-        refresh_token: '',
-      });
-
-      const result2 = await freshSupabase
-        .from('bot_credentials')
-        .select('gemini_api_key, user_id, created_at, updated_at')
-        .eq('user_id', user.id)
-        .single();
-
-      console.log('Query result 2:', {
-        data: result2.data,
-        error: result2.error
-      });
-
-      if (result2.error) {
-        // If it's just "no rows" error, that's expected, not a real error
-        if (result2.error.code === 'PGRST116') {
-          console.log('ℹ️ No credentials found (expected error code)');
-        } else {
-          credError = result2.error;
-          console.error('❌ Second query failed:', result2.error);
-        }
-      } else if (result2.data) {
-        credentials = result2.data;
-        console.log('✅ Credentials found on second attempt');
-      }
-    }
-
-    // Step 5: Process results
-    console.log('📊 Final credentials check:', {
-      hasCredentials: !!credentials,
+    console.log('Credentials query result:', {
+      hasData: !!credentials,
       hasError: !!credError,
       errorMessage: credError?.message,
-      credentialsUserId: credentials?.user_id,
-      requestUserId: user.id,
-      userIdMatch: credentials?.user_id === user.id,
-      hasGeminiKey: !!credentials?.gemini_api_key,
-      geminiKeyLength: credentials?.gemini_api_key?.length || 0
+      errorCode: credError?.code
     });
 
     if (credError) {
-      console.error('❌ Database error fetching credentials:', credError);
-      throw new Error(`Database error: ${credError.message}`);
+      if (credError.code === 'PGRST116') {
+        console.error('❌ No credentials found for user:', user.id);
+        throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
+      } else {
+        console.error('❌ Database error fetching credentials:', credError);
+        throw new Error(`Database error: ${credError.message}`);
+      }
     }
 
-    if (!credentials) {
-      console.error('❌ No credentials record found for user:', user.id);
-      throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
-    }
-
-    if (!credentials.gemini_api_key) {
+    if (!credentials || !credentials.gemini_api_key) {
       console.error('❌ Gemini API key is null/empty in database');
       throw new Error('Gemini API key not configured. Please add your API key in settings.');
     }
 
     console.log('✅ Gemini API key found successfully');
     console.log('Key length:', credentials.gemini_api_key.length);
-    console.log('Key prefix:', credentials.gemini_api_key.substring(0, 10) + '...');
     
     const geminiApiKey = credentials.gemini_api_key;
 
-    // Step 6: Prepare the prompt for Gemini
+    // Step 5: Prepare the prompt for Gemini
     const prompt = `You are a helpful assistant answering questions on Reddit in r/${subreddit}. 
 
 Question Title: ${title}
@@ -198,7 +135,7 @@ Important guidelines:
 
     console.log('🤖 Calling Gemini API...');
     
-    // Step 7: Call Gemini API
+    // Step 6: Call Gemini API
     const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: {
