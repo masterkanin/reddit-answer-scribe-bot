@@ -31,7 +31,7 @@ serve(async (req) => {
     const token = authHeader.replace('Bearer ', '');
     console.log('Token length:', token.length);
 
-    // Create Supabase client
+    // Create Supabase client for authentication
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       auth: { 
         persistSession: false,
@@ -66,7 +66,7 @@ serve(async (req) => {
       subreddit: subreddit 
     });
 
-    // Step 3: Create admin client for credential access
+    // Step 3: Use service role key to fetch credentials directly
     console.log('🔑 Step 3: Creating admin client for credential access...');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
@@ -82,7 +82,7 @@ serve(async (req) => {
       },
     });
 
-    // Step 4: Fetch credentials using admin client
+    // Step 4: Fetch credentials using admin client (bypassing RLS)
     console.log('🔍 Step 4: Fetching Gemini API key for user:', user.id);
     
     const { data: credentials, error: credError } = await adminSupabase
@@ -133,10 +133,10 @@ Important guidelines:
 - Keep it under 500 words unless the question really needs a longer answer
 - Don't mention that you're an AI unless specifically relevant`;
 
-    console.log('🤖 Calling Gemini API...');
+    console.log('🤖 Calling Gemini API with model: gemini-1.5-flash...');
     
-    // Step 6: Call Gemini API
-    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiApiKey}`, {
+    // Step 6: Call Gemini API with the correct model name
+    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
