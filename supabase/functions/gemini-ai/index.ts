@@ -23,7 +23,7 @@ serve(async (req) => {
       auth: { persistSession: false },
     });
 
-    // Get user from Authorization header
+    // Enhanced authentication debugging
     const authHeader = req.headers.get('Authorization');
     console.log('Auth header present:', !!authHeader);
     
@@ -34,11 +34,15 @@ serve(async (req) => {
 
     const token = authHeader.replace('Bearer ', '');
     console.log('Token length:', token.length);
+    console.log('Token prefix:', token.substring(0, 20) + '...');
 
+    // Get user with enhanced error handling
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
     if (userError) {
       console.error('❌ User authentication error:', userError);
+      console.error('Error code:', userError.status);
+      console.error('Error message:', userError.message);
       throw new Error(`Authentication failed: ${userError.message}`);
     }
 
@@ -47,7 +51,10 @@ serve(async (req) => {
       throw new Error('Invalid user token - no user found');
     }
 
-    console.log('✅ User authenticated:', user.id);
+    console.log('✅ User authenticated successfully');
+    console.log('User ID:', user.id);
+    console.log('User email:', user.email);
+    console.log('User created at:', user.created_at);
 
     const { question, title, subreddit } = await req.json();
     console.log('Request data:', { 
@@ -56,19 +63,42 @@ serve(async (req) => {
       subreddit: subreddit 
     });
 
-    // Get user's Gemini API key with improved error handling
+    // Enhanced database query with better debugging
     console.log('🔍 Fetching Gemini API key for user:', user.id);
     
+    // First, check if user exists in bot_credentials table at all
+    const { data: userCheck, error: userCheckError } = await supabase
+      .from('bot_credentials')
+      .select('user_id')
+      .eq('user_id', user.id);
+
+    console.log('User existence check:', {
+      found: userCheck?.length || 0,
+      error: userCheckError?.message,
+      userId: user.id
+    });
+
+    if (userCheckError) {
+      console.error('❌ Database error checking user existence:', userCheckError);
+      throw new Error(`Database error: ${userCheckError.message}`);
+    }
+
+    // Now get the credentials with enhanced error handling
     const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
-      .select('gemini_api_key')
+      .select('gemini_api_key, user_id, created_at, updated_at')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    console.log('Database query result:', {
+    console.log('Credentials query result:', {
       hasData: !!credentials,
       hasError: !!credError,
-      errorMessage: credError?.message
+      errorMessage: credError?.message,
+      credentialsUserId: credentials?.user_id,
+      requestUserId: user.id,
+      userIdMatch: credentials?.user_id === user.id,
+      hasGeminiKey: !!credentials?.gemini_api_key,
+      geminiKeyLength: credentials?.gemini_api_key?.length || 0
     });
 
     if (credError) {
@@ -78,6 +108,15 @@ serve(async (req) => {
 
     if (!credentials) {
       console.error('❌ No credentials record found for user:', user.id);
+      
+      // Try to get all records for debugging (remove user filter)
+      const { data: allCreds, error: allCredsError } = await supabase
+        .from('bot_credentials')
+        .select('user_id')
+        .limit(5);
+      
+      console.log('Debug - Sample user IDs in bot_credentials:', allCreds?.map(c => c.user_id));
+      
       throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
     }
 
@@ -86,7 +125,10 @@ serve(async (req) => {
       throw new Error('Gemini API key not configured. Please add your API key in settings.');
     }
 
-    console.log('✅ Gemini API key found, length:', credentials.gemini_api_key.length);
+    console.log('✅ Gemini API key found successfully');
+    console.log('Key length:', credentials.gemini_api_key.length);
+    console.log('Key prefix:', credentials.gemini_api_key.substring(0, 10) + '...');
+    
     const geminiApiKey = credentials.gemini_api_key;
 
     // Prepare the prompt for Gemini
@@ -106,8 +148,8 @@ Important guidelines:
 
     console.log('🤖 Calling Gemini API...');
     
-    // Call Gemini API
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiApiKey}`, {
+    // Call Gemini API with enhanced error handling
+    const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -127,18 +169,27 @@ Important guidelines:
       }),
     });
 
-    console.log('Gemini API response status:', response.status);
+    console.log('Gemini API response status:', geminiResponse.status);
+    console.log('Gemini API response headers:', Object.fromEntries(geminiResponse.headers.entries()));
 
-    if (!response.ok) {
-      const errorText = await response.text();
+    if (!geminiResponse.ok) {
+      const errorText = await geminiResponse.text();
       console.error('❌ Gemini API error response:', errorText);
-      throw new Error(`Gemini API error (${response.status}): ${errorText}`);
+      
+      // Check for specific API key errors
+      if (geminiResponse.status === 400 && errorText.includes('API_KEY_INVALID')) {
+        throw new Error('Invalid Gemini API key. Please check your API key in settings.');
+      }
+      
+      throw new Error(`Gemini API error (${geminiResponse.status}): ${errorText}`);
     }
 
-    const data = await response.json();
+    const data = await geminiResponse.json();
     console.log('Gemini API response structure:', {
       hasCandidates: !!data.candidates,
-      candidatesCount: data.candidates?.length || 0
+      candidatesCount: data.candidates?.length || 0,
+      hasContent: !!data.candidates?.[0]?.content,
+      hasParts: !!data.candidates?.[0]?.content?.parts
     });
     
     if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
@@ -147,7 +198,9 @@ Important guidelines:
     }
 
     const generatedAnswer = data.candidates[0].content.parts[0].text;
-    console.log('✅ Generated answer length:', generatedAnswer.length);
+    console.log('✅ Generated answer successfully');
+    console.log('Answer length:', generatedAnswer.length);
+    console.log('Answer preview:', generatedAnswer.substring(0, 100) + '...');
 
     return new Response(JSON.stringify({ answer: generatedAnswer }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -156,11 +209,13 @@ Important guidelines:
   } catch (error) {
     console.error('❌ Gemini AI function error:', error.message);
     console.error('Full error details:', error);
+    console.error('Error stack:', error.stack);
     
-    // Return detailed error information
+    // Return detailed error information for debugging
     return new Response(JSON.stringify({ 
       error: error.message,
-      details: 'Check the function logs for more information'
+      details: 'Check the function logs for more information',
+      timestamp: new Date().toISOString()
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

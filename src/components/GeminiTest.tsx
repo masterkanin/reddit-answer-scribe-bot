@@ -5,7 +5,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Zap, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Zap, CheckCircle, XCircle, Loader2, RefreshCw } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface TestResult {
   success: boolean;
@@ -14,15 +15,35 @@ interface TestResult {
 }
 
 const GeminiTest = () => {
+  const { session, user } = useAuth();
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<TestResult | null>(null);
 
   const testGeminiAPI = async () => {
+    if (!session || !user) {
+      toast.error('Please sign in to test the Gemini API');
+      return;
+    }
+
     setTesting(true);
     setResult(null);
     
     try {
       console.log('🧪 Testing Gemini API integration...');
+      console.log('User ID:', user.id);
+      console.log('Session access token length:', session.access_token?.length || 0);
+      
+      // Refresh the session to ensure we have the latest token
+      const { data: refreshedSession, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError) {
+        console.error('❌ Session refresh error:', refreshError);
+        toast.error('Session refresh failed. Please sign in again.');
+        return;
+      }
+
+      const tokenToUse = refreshedSession.session?.access_token || session.access_token;
+      console.log('Using token length:', tokenToUse?.length || 0);
       
       const { data, error } = await supabase.functions.invoke('gemini-ai', {
         body: {
@@ -72,6 +93,19 @@ const GeminiTest = () => {
     }
   };
 
+  const refreshSession = async () => {
+    try {
+      const { error } = await supabase.auth.refreshSession();
+      if (error) {
+        toast.error('Failed to refresh session');
+      } else {
+        toast.success('Session refreshed successfully');
+      }
+    } catch (error) {
+      toast.error('Failed to refresh session');
+    }
+  };
+
   return (
     <Card className="bg-slate-800 border-slate-700">
       <CardHeader>
@@ -81,30 +115,55 @@ const GeminiTest = () => {
             <div>
               <CardTitle className="text-white">Test Gemini API</CardTitle>
               <CardDescription className="text-slate-400">
-                Test your Gemini API key integration
+                Test your Gemini API key integration with enhanced debugging
               </CardDescription>
             </div>
           </div>
+          {session && (
+            <Button
+              onClick={refreshSession}
+              variant="outline"
+              size="sm"
+              className="text-slate-300 border-slate-600 hover:bg-slate-700"
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh Session
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Button 
-          onClick={testGeminiAPI}
-          disabled={testing}
-          className="w-full bg-green-600 hover:bg-green-700"
-        >
-          {testing ? (
-            <>
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Testing...
-            </>
-          ) : (
-            <>
-              <Zap className="h-4 w-4 mr-2" />
-              Test Gemini API
-            </>
-          )}
-        </Button>
+        {!session || !user ? (
+          <div className="text-center py-4 text-slate-400">
+            Please sign in to test the Gemini API
+          </div>
+        ) : (
+          <>
+            <div className="text-xs text-slate-500 space-y-1">
+              <p>User ID: {user.id}</p>
+              <p>Session valid: {session ? 'Yes' : 'No'}</p>
+              <p>Token length: {session.access_token?.length || 0}</p>
+            </div>
+            
+            <Button 
+              onClick={testGeminiAPI}
+              disabled={testing}
+              className="w-full bg-green-600 hover:bg-green-700"
+            >
+              {testing ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <Zap className="h-4 w-4 mr-2" />
+                  Test Gemini API
+                </>
+              )}
+            </Button>
+          </>
+        )}
 
         {result && (
           <div className={`p-4 rounded-lg border ${
