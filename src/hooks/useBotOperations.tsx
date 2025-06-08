@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -40,6 +39,7 @@ export const useBotOperations = () => {
   const [lastErrorTime, setLastErrorTime] = useState<Date | null>(null);
   const [isShadowbanned, setIsShadowbanned] = useState(false);
   const [apiCallCount, setApiCallCount] = useState(0);
+  const [isInCooldown, setIsInCooldown] = useState(false);
 
   // REDDIT COMPLIANCE: Conservative limits
   const DAILY_COMMENT_LIMIT = 5;
@@ -49,11 +49,21 @@ export const useBotOperations = () => {
   const API_RATE_LIMIT = 50; // Conservative API rate limit per minute
 
   // Check if we're in cooldown period due to errors
-  const isInCooldown = () => {
-    if (!lastErrorTime || errorCount < MAX_ERRORS_BEFORE_COOLDOWN) return false;
+  const checkCooldownStatus = () => {
+    if (!lastErrorTime || errorCount < MAX_ERRORS_BEFORE_COOLDOWN) {
+      setIsInCooldown(false);
+      return false;
+    }
     const timeSinceLastError = Date.now() - lastErrorTime.getTime();
-    return timeSinceLastError < COOLDOWN_DURATION;
+    const inCooldown = timeSinceLastError < COOLDOWN_DURATION;
+    setIsInCooldown(inCooldown);
+    return inCooldown;
   };
+
+  // Update cooldown status whenever error count or last error time changes
+  useEffect(() => {
+    checkCooldownStatus();
+  }, [errorCount, lastErrorTime]);
 
   // Check daily comment limits
   const checkDailyLimits = async () => {
@@ -104,7 +114,7 @@ export const useBotOperations = () => {
     }
 
     // Check if we're in cooldown
-    if (isInCooldown()) {
+    if (isInCooldown) {
       const remainingTime = Math.ceil((COOLDOWN_DURATION - (Date.now() - (lastErrorTime?.getTime() || 0))) / 60000);
       toast.error(`Bot is in cooldown mode. Please wait ${remainingTime} minutes.`);
       return false;
@@ -344,7 +354,7 @@ export const useBotOperations = () => {
     fetchRecentActivities,
     dailyCommentCount,
     dailyLimit: DAILY_COMMENT_LIMIT,
-    isInCooldown: isInCooldown(),
+    isInCooldown,
     errorCount,
     isShadowbanned,
     apiCallCount,
