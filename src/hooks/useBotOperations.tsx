@@ -1,5 +1,5 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
@@ -42,7 +42,26 @@ export const useBotOperations = () => {
   const [recentActivities, setRecentActivities] = useState<QuestionAnswered[]>([]);
   const [dailyCommentCount, setDailyCommentCount] = useState(0);
 
+  // Track subscription state to prevent duplicates
+  const channelRef = useRef<any>(null);
+  const isSubscribedRef = useRef(false);
+  const userIdRef = useRef<string | null>(null);
+
   const DAILY_COMMENT_LIMIT = 5;
+
+  // Cleanup function for channels
+  const cleanupChannel = () => {
+    if (channelRef.current) {
+      try {
+        console.log('🧹 Cleaning up existing channel');
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+        isSubscribedRef.current = false;
+      } catch (error) {
+        console.error('Error cleaning up channel:', error);
+      }
+    }
+  };
 
   // Update session subreddits immediately
   const updateSessionSubreddits = async (subreddits: string[]) => {
@@ -344,9 +363,80 @@ export const useBotOperations = () => {
     setDailyCommentCount(todayCount);
   };
 
-  // Single useEffect to manage all subscriptions
+  // Setup realtime subscriptions with proper cleanup
+  const setupRealtimeSubscriptions = () => {
+    if (!user || isSubscribedRef.current || userIdRef.current === user.id) {
+      return;
+    }
+
+    // Clean up any existing channel first
+    cleanupChannel();
+
+    try {
+      console.log('🔄 Setting up realtime subscriptions for user:', user.id);
+      userIdRef.current = user.id;
+
+      // Create a new channel with a unique name
+      const channelName = `user-updates-${user.id}-${Date.now()}`;
+      const channel = supabase.channel(channelName);
+
+      // Set up subscriptions
+      channel
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'bot_sessions',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            console.log('Session update received:', payload);
+            if (payload.eventType === 'UPDATE' && payload.new) {
+              setCurrentSession(payload.new as BotSession);
+              setIsRunning(payload.new.is_active);
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'questions_answered',
+            filter: `user_id=eq.${user.id}`
+          },
+          (payload) => {
+            console.log('New activity received:', payload);
+            fetchRecentActivities();
+            checkDailyLimits();
+          }
+        );
+
+      // Subscribe to the channel
+      channel.subscribe((status) => {
+        console.log('Subscription status:', status);
+        if (status === 'SUBSCRIBED') {
+          isSubscribedRef.current = true;
+          console.log('✅ Successfully subscribed to realtime updates');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('❌ Channel subscription error');
+          isSubscribedRef.current = false;
+        }
+      });
+
+      channelRef.current = channel;
+    } catch (error) {
+      console.error('Error setting up realtime subscriptions:', error);
+    }
+  };
+
+  // Main useEffect for managing data and subscriptions
   useEffect(() => {
     if (!user) {
+      // Clean up when user logs out
+      cleanupChannel();
+      userIdRef.current = null;
       setCurrentSession(null);
       setIsRunning(false);
       setRecentActivities([]);
@@ -359,46 +449,17 @@ export const useBotOperations = () => {
     fetchRecentActivities();
     checkDailyLimits();
 
-    // Create a single channel for all real-time updates
-    const channel = supabase
-      .channel(`user-updates-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'bot_sessions',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('Session update received:', payload);
-          if (payload.eventType === 'UPDATE' && payload.new) {
-            setCurrentSession(payload.new as BotSession);
-            setIsRunning(payload.new.is_active);
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'questions_answered',
-          filter: `user_id=eq.${user.id}`
-        },
-        (payload) => {
-          console.log('New activity received:', payload);
-          fetchRecentActivities();
-          checkDailyLimits();
-        }
-      )
-      .subscribe();
+    // Set up realtime subscriptions with delay to prevent race conditions
+    const subscriptionTimeout = setTimeout(() => {
+      setupRealtimeSubscriptions();
+    }, 100);
 
     // Cleanup function
     return () => {
-      supabase.removeChannel(channel);
+      clearTimeout(subscriptionTimeout);
+      cleanupChannel();
     };
-  }, [user]);
+  }, [user?.id]); // Only depend on user.id to prevent unnecessary re-runs
 
   const getStatusDisplay = () => {
     if (!currentSession) return 'Stopped';
