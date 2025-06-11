@@ -19,62 +19,55 @@ serve(async (req) => {
   try {
     console.log('🤖 Gemini AI function called');
     
-    const requestBody = await req.json();
-    const { question, title, subreddit, userId } = requestBody;
-
-    let currentUserId: string;
-
-    // Handle both authenticated requests and scheduler requests
-    if (userId) {
-      // Called by scheduler - use the provided userId
-      currentUserId = userId;
-      console.log('Called by scheduler for user:', currentUserId);
-    } else {
-      // Called by authenticated user - get from auth header
-      const authHeader = req.headers.get('Authorization');
-      console.log('Auth header present:', !!authHeader);
-      
-      if (!authHeader) {
-        console.error('❌ Missing authorization header');
-        throw new Error('Missing authorization header');
-      }
-
-      const token = authHeader.replace('Bearer ', '');
-      console.log('Token length:', token.length);
-
-      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { 
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false
-        },
-      });
-
-      const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-
-      if (userError) {
-        console.error('❌ User authentication error:', userError);
-        throw new Error(`Authentication failed: ${userError.message}`);
-      }
-
-      if (!user) {
-        console.error('❌ No user found in token');
-        throw new Error('Invalid user token - no user found');
-      }
-
-      currentUserId = user.id;
-      console.log('✅ User authenticated successfully');
-      console.log('User ID:', currentUserId);
+    // Get authorization header
+    const authHeader = req.headers.get('Authorization');
+    console.log('Auth header present:', !!authHeader);
+    
+    if (!authHeader) {
+      console.error('❌ Missing authorization header');
+      throw new Error('Missing authorization header');
     }
 
+    const token = authHeader.replace('Bearer ', '');
+    console.log('Token length:', token.length);
+
+    // Create Supabase client for authentication
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { 
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+      },
+    });
+
+    // Step 1: Authenticate user
+    console.log('🔐 Step 1: Authenticating user...');
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+
+    if (userError) {
+      console.error('❌ User authentication error:', userError);
+      throw new Error(`Authentication failed: ${userError.message}`);
+    }
+
+    if (!user) {
+      console.error('❌ No user found in token');
+      throw new Error('Invalid user token - no user found');
+    }
+
+    console.log('✅ User authenticated successfully');
+    console.log('User ID:', user.id);
+    console.log('User email:', user.email);
+
+    // Step 2: Get request data
+    const { question, title, subreddit } = await req.json();
     console.log('📝 Request data:', { 
       hasQuestion: !!question, 
       hasTitle: !!title, 
       subreddit: subreddit 
     });
 
-    // Use service role key for database operations
-    console.log('🔑 Creating admin client for credential access...');
+    // Step 3: Use service role key to fetch credentials directly
+    console.log('🔑 Step 3: Creating admin client for credential access...');
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
     if (!supabaseServiceKey) {
@@ -89,13 +82,13 @@ serve(async (req) => {
       },
     });
 
-    // Fetch credentials using admin client (bypassing RLS)
-    console.log('🔍 Fetching Gemini API key for user:', currentUserId);
+    // Step 4: Fetch credentials using admin client (bypassing RLS)
+    console.log('🔍 Step 4: Fetching Gemini API key for user:', user.id);
     
     const { data: credentials, error: credError } = await adminSupabase
       .from('bot_credentials')
       .select('gemini_api_key, user_id, created_at, updated_at')
-      .eq('user_id', currentUserId)
+      .eq('user_id', user.id)
       .single();
 
     console.log('Credentials query result:', {
@@ -107,7 +100,7 @@ serve(async (req) => {
 
     if (credError) {
       if (credError.code === 'PGRST116') {
-        console.error('❌ No credentials found for user:', currentUserId);
+        console.error('❌ No credentials found for user:', user.id);
         throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
       } else {
         console.error('❌ Database error fetching credentials:', credError);
@@ -125,7 +118,7 @@ serve(async (req) => {
     
     const geminiApiKey = credentials.gemini_api_key;
 
-    // Prepare the prompt for Gemini
+    // Step 5: Prepare the prompt for Gemini
     const prompt = `You are a helpful assistant answering questions on Reddit in r/${subreddit}. 
 
 Question Title: ${title}
@@ -144,7 +137,7 @@ Guidelines:
 
     console.log('🤖 Calling Gemini API with model: gemini-1.5-flash...');
     
-    // Call Gemini API with the correct model name
+    // Step 6: Call Gemini API with the correct model name
     const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: {

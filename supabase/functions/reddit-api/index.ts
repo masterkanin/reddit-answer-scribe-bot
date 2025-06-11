@@ -16,63 +16,46 @@ serve(async (req) => {
   }
 
   try {
-    console.log('🔗 Reddit API function called');
-    
-    const requestBody = await req.json();
-    const { action, subredditName, postId, comment, userId } = requestBody;
+    // Get user from Authorization header
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      console.error('Missing authorization header');
+      throw new Error('Missing authorization header');
+    }
 
-    let currentUserId: string;
+    // Extract the JWT token
+    const token = authHeader.replace('Bearer ', '');
+    console.log('Received auth token, length:', token.length);
 
-    // Handle both authenticated requests and scheduler requests
-    if (userId) {
-      // Called by scheduler - use the provided userId
-      currentUserId = userId;
-      console.log('Called by scheduler for user:', currentUserId);
-    } else {
-      // Called by authenticated user - get from auth header
-      const authHeader = req.headers.get('Authorization');
-      if (!authHeader) {
-        console.error('Missing authorization header');
-        throw new Error('Missing authorization header');
-      }
-
-      const token = authHeader.replace('Bearer ', '');
-      console.log('Received auth token, length:', token.length);
-
-      const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { persistSession: false },
-        global: {
-          headers: {
-            Authorization: authHeader,
-          },
+    // Create Supabase client with the user's token for RLS
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      auth: { persistSession: false },
+      global: {
+        headers: {
+          Authorization: authHeader,
         },
-      });
+      },
+    });
 
-      const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    // Verify user authentication and get user info
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
 
-      if (userError || !user) {
-        console.error('Invalid user token:', userError);
-        throw new Error('Invalid user token');
-      }
-
-      currentUserId = user.id;
-      console.log('Authenticated user:', currentUserId);
+    if (userError || !user) {
+      console.error('Invalid user token:', userError);
+      throw new Error('Invalid user token');
     }
 
-    // Use service role key for database operations
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!supabaseServiceKey) {
-      throw new Error('Service role key not configured');
-    }
+    console.log('Authenticated user:', user.id);
 
-    const adminSupabase = createClient(supabaseUrl, supabaseServiceKey);
+    const { action, subredditName, postId, comment } = await req.json();
+    console.log('Action:', action, 'Subreddit:', subredditName, 'User ID:', user.id);
 
-    // Get user's Reddit credentials
-    console.log('Fetching Reddit credentials for user:', currentUserId);
-    const { data: credentials, error: credError } = await adminSupabase
+    // Get user's Reddit credentials using the authenticated client
+    console.log('Fetching Reddit credentials for user:', user.id);
+    const { data: credentials, error: credError } = await supabase
       .from('bot_credentials')
       .select('reddit_client_id, reddit_client_secret, reddit_username, reddit_password')
-      .eq('user_id', currentUserId)
+      .eq('user_id', user.id)
       .maybeSingle();
 
     if (credError) {
@@ -81,11 +64,11 @@ serve(async (req) => {
     }
 
     if (!credentials) {
-      console.error('No Reddit credentials found for user:', currentUserId);
+      console.error('No Reddit credentials found for user:', user.id);
       throw new Error('Reddit credentials not found. Please configure your Reddit API credentials first.');
     }
 
-    console.log('Successfully fetched credentials for user:', currentUserId);
+    console.log('Successfully fetched credentials for user:', user.id);
     console.log('Credentials check:', {
       hasClientId: !!credentials.reddit_client_id,
       hasClientSecret: !!credentials.reddit_client_secret,
@@ -96,7 +79,7 @@ serve(async (req) => {
     const { reddit_client_id, reddit_client_secret, reddit_username, reddit_password } = credentials;
 
     if (!reddit_client_id || !reddit_client_secret || !reddit_username || !reddit_password) {
-      console.error('Incomplete Reddit credentials for user:', currentUserId);
+      console.error('Incomplete Reddit credentials for user:', user.id);
       console.error('Missing fields:', {
         client_id: !reddit_client_id,
         client_secret: !reddit_client_secret,
