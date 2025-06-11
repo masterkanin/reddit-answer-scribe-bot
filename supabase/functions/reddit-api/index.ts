@@ -1,3 +1,4 @@
+
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -91,6 +92,10 @@ serve(async (req) => {
 
     console.log('Reddit credentials validated, attempting authentication...');
 
+    // Create proper User-Agent string according to Reddit API guidelines
+    const userAgent = `RedditQABot/1.0.0 (by /u/${encodeURIComponent(reddit_username)})`;
+    console.log('Using User-Agent:', userAgent);
+
     // Enhanced Reddit authentication with better error handling
     const authString = btoa(`${reddit_client_id}:${reddit_client_secret}`);
     const tokenBody = new URLSearchParams({
@@ -106,7 +111,7 @@ serve(async (req) => {
       headers: {
         'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'RedditQABot:v1.0.0 (by /u/' + reddit_username + ')',
+        'User-Agent': userAgent,
       },
       body: tokenBody.toString(),
     });
@@ -200,23 +205,35 @@ serve(async (req) => {
     if (action === 'testCredentials') {
       console.log('Testing Reddit credentials...');
       
-      // Test basic API access with the obtained token
+      // Test basic API access with the obtained token - use correct OAuth endpoint
       const testResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'User-Agent': 'RedditQABot:v1.0.0 (by /u/' + reddit_username + ')',
+          'User-Agent': userAgent,
         },
       });
+
+      console.log('Reddit API test response status:', testResponse.status);
 
       if (!testResponse.ok) {
         const testErrorText = await testResponse.text();
         console.error('Reddit API test failed with status:', testResponse.status);
         console.error('Reddit API test error response:', testErrorText);
-        throw new Error(`Reddit API test failed: ${testResponse.status} - ${testErrorText}`);
+        
+        let errorMessage = `Reddit API test failed: ${testResponse.status}`;
+        if (testResponse.status === 403) {
+          errorMessage = 'Access denied to Reddit API. Your account may not have API access permissions.';
+        } else if (testResponse.status === 429) {
+          errorMessage = 'Rate limited by Reddit. Please wait a moment and try again.';
+        } else if (testResponse.status === 401) {
+          errorMessage = 'Invalid access token. Please check your Reddit app configuration.';
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const userData = await testResponse.json();
-      console.log('Reddit API test successful, user data:', userData);
+      console.log('Reddit API test successful, user data received');
       
       result = { 
         success: true, 
@@ -242,7 +259,7 @@ serve(async (req) => {
       const response = await fetch(subredditUrl, {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'User-Agent': 'RedditQABot:v1.0.0 (by /u/' + reddit_username + ')',
+          'User-Agent': userAgent,
         },
       });
 
@@ -302,7 +319,7 @@ serve(async (req) => {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'RedditQABot:v1.0.0 (by /u/' + reddit_username + ')',
+          'User-Agent': userAgent,
         },
         body: commentBody.toString(),
       });
