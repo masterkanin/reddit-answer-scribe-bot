@@ -1,12 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { MessageSquare, ExternalLink, Clock, User, ArrowUp, CheckCircle, XCircle } from "lucide-react";
-import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
 
 interface ActivityItem {
   id: string;
@@ -22,91 +20,21 @@ interface ActivityItem {
 
 interface BotActivityProps {
   isActive: boolean;
+  activities: any[];
 }
 
-const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
-  const { user } = useAuth();
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-
-  // Fetch real activities from database
-  const fetchActivities = async () => {
-    if (!user) {
-      setActivities([]);
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('questions_answered')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(20);
-
-      if (error) {
-        console.error('Error fetching activities:', error);
-        return;
-      }
-
-      const formattedActivities: ActivityItem[] = (data || []).map(item => ({
-        id: item.id,
-        type: item.status === 'posted' ? 'answer_posted' : 'answer_failed',
-        subreddit: item.subreddit_name,
-        title: item.question_title,
-        author: item.question_author,
-        timestamp: new Date(item.created_at),
-        url: item.reddit_comment_id ? `https://reddit.com/r/${item.subreddit_name}/comments/${item.reddit_post_id}/_/${item.reddit_comment_id}` : undefined,
-        score: (item.upvotes || 0) - (item.downvotes || 0),
-        status: item.status,
-      }));
-
-      setActivities(formattedActivities);
-    } catch (error) {
-      console.error('Error fetching activities:', error);
-    }
-  };
-
-  // Set up real-time subscription for new activities
-  useEffect(() => {
-    if (!user) return;
-
-    fetchActivities();
-
-    const channel = supabase
-      .channel('questions_answered_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'questions_answered',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          console.log('New activity:', payload);
-          const newActivity: ActivityItem = {
-            id: payload.new.id,
-            type: payload.new.status === 'posted' ? 'answer_posted' : 'answer_failed',
-            subreddit: payload.new.subreddit_name,
-            title: payload.new.question_title,
-            author: payload.new.question_author,
-            timestamp: new Date(payload.new.created_at),
-            url: payload.new.reddit_comment_id ? 
-              `https://reddit.com/r/${payload.new.subreddit_name}/comments/${payload.new.reddit_post_id}/_/${payload.new.reddit_comment_id}` : 
-              undefined,
-            score: (payload.new.upvotes || 0) - (payload.new.downvotes || 0),
-            status: payload.new.status,
-          };
-          
-          setActivities(prev => [newActivity, ...prev.slice(0, 19)]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user]);
+const BotActivity: React.FC<BotActivityProps> = ({ isActive, activities }) => {
+  const formattedActivities: ActivityItem[] = activities.map(item => ({
+    id: item.id,
+    type: item.status === 'posted' ? 'answer_posted' : 'answer_failed',
+    subreddit: item.subreddit_name,
+    title: item.question_title,
+    author: item.question_author,
+    timestamp: new Date(item.created_at),
+    url: item.reddit_comment_id ? `https://reddit.com/r/${item.subreddit_name}/comments/${item.reddit_post_id}/_/${item.reddit_comment_id}` : undefined,
+    score: (item.upvotes || 0) - (item.downvotes || 0),
+    status: item.status,
+  }));
 
   const getActivityIcon = (type: string, status: string) => {
     if (type === 'answer_posted' && status === 'posted') {
@@ -151,7 +79,7 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
       </CardHeader>
       <CardContent>
         <ScrollArea className="h-96">
-          {activities.length === 0 ? (
+          {formattedActivities.length === 0 ? (
             <div className="text-center py-8 text-slate-400">
               {isActive ? (
                 <div>
@@ -169,7 +97,7 @@ const BotActivity: React.FC<BotActivityProps> = ({ isActive }) => {
             </div>
           ) : (
             <div className="space-y-3">
-              {activities.map((activity) => (
+              {formattedActivities.map((activity) => (
                 <div
                   key={activity.id}
                   className="flex items-start space-x-3 p-3 bg-slate-700 rounded-lg border border-slate-600 hover:bg-slate-600 transition-colors"

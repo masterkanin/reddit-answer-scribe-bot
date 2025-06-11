@@ -1,4 +1,3 @@
-
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +19,7 @@ const Index = () => {
   const { 
     currentSession, 
     isRunning, 
+    recentActivities,
     startBot, 
     stopBot, 
     statusDisplay,
@@ -221,7 +221,7 @@ const Index = () => {
               </TabsContent>
 
               <TabsContent value="activity">
-                <BotActivity isActive={isRunning} />
+                <BotActivity isActive={isRunning} activities={recentActivities} />
               </TabsContent>
 
               <TabsContent value="stats">
