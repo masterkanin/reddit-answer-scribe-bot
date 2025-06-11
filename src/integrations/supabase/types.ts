@@ -51,9 +51,14 @@ export type Database = {
           error_count: number
           id: string
           is_active: boolean
+          last_activity: string | null
+          next_run_time: string | null
+          pause_reason: string | null
           questions_processed: number
           session_end: string | null
           session_start: string
+          status: string | null
+          subreddit_list: string[] | null
           successful_answers: number
           updated_at: string
           user_id: string
@@ -63,9 +68,14 @@ export type Database = {
           error_count?: number
           id?: string
           is_active?: boolean
+          last_activity?: string | null
+          next_run_time?: string | null
+          pause_reason?: string | null
           questions_processed?: number
           session_end?: string | null
           session_start?: string
+          status?: string | null
+          subreddit_list?: string[] | null
           successful_answers?: number
           updated_at?: string
           user_id: string
@@ -75,9 +85,14 @@ export type Database = {
           error_count?: number
           id?: string
           is_active?: boolean
+          last_activity?: string | null
+          next_run_time?: string | null
+          pause_reason?: string | null
           questions_processed?: number
           session_end?: string | null
           session_start?: string
+          status?: string | null
+          subreddit_list?: string[] | null
           successful_answers?: number
           updated_at?: string
           user_id?: string

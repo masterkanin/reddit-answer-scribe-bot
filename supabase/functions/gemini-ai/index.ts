@@ -19,106 +19,69 @@ serve(async (req) => {
   try {
     console.log('🤖 Gemini AI function called');
     
-    // Get authorization header
-    const authHeader = req.headers.get('Authorization');
-    console.log('Auth header present:', !!authHeader);
-    
-    if (!authHeader) {
-      console.error('❌ Missing authorization header');
-      throw new Error('Missing authorization header');
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    console.log('Token length:', token.length);
-
-    // Create Supabase client for authentication
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: { 
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false
-      },
-    });
-
-    // Step 1: Authenticate user
-    console.log('🔐 Step 1: Authenticating user...');
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
-
-    if (userError) {
-      console.error('❌ User authentication error:', userError);
-      throw new Error(`Authentication failed: ${userError.message}`);
-    }
-
-    if (!user) {
-      console.error('❌ No user found in token');
-      throw new Error('Invalid user token - no user found');
-    }
-
-    console.log('✅ User authenticated successfully');
-    console.log('User ID:', user.id);
-    console.log('User email:', user.email);
-
-    // Step 2: Get request data
-    const { question, title, subreddit } = await req.json();
+    const { question, title, subreddit, apiKey } = await req.json();
     console.log('📝 Request data:', { 
       hasQuestion: !!question, 
       hasTitle: !!title, 
       subreddit: subreddit 
     });
 
-    // Step 3: Use service role key to fetch credentials directly
-    console.log('🔑 Step 3: Creating admin client for credential access...');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    
-    if (!supabaseServiceKey) {
-      console.error('❌ Missing service role key');
-      throw new Error('Service configuration error');
-    }
+    let geminiApiKey = apiKey;
 
-    const adminSupabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { 
-        persistSession: false,
-        autoRefreshToken: false
-      },
-    });
+    // If no API key provided, try to get from auth header and database
+    if (!geminiApiKey) {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) {
+        throw new Error('Missing authorization header or API key');
+      }
 
-    // Step 4: Fetch credentials using admin client (bypassing RLS)
-    console.log('🔍 Step 4: Fetching Gemini API key for user:', user.id);
-    
-    const { data: credentials, error: credError } = await adminSupabase
-      .from('bot_credentials')
-      .select('gemini_api_key, user_id, created_at, updated_at')
-      .eq('user_id', user.id)
-      .single();
-
-    console.log('Credentials query result:', {
-      hasData: !!credentials,
-      hasError: !!credError,
-      errorMessage: credError?.message,
-      errorCode: credError?.code
-    });
-
-    if (credError) {
-      if (credError.code === 'PGRST116') {
-        console.error('❌ No credentials found for user:', user.id);
-        throw new Error('No bot credentials found for this user. Please configure your Gemini API key first.');
+      const token = authHeader.replace('Bearer ', '');
+      
+      // Check if this is the service role key (from scheduler)
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (token === serviceRoleKey) {
+        // For service role calls, the API key should be in the request body
+        if (!apiKey) {
+          throw new Error('API key required for service role calls');
+        }
+        geminiApiKey = apiKey;
       } else {
-        console.error('❌ Database error fetching credentials:', credError);
-        throw new Error(`Database error: ${credError.message}`);
+        // For user calls, authenticate and get API key from database
+        const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+          auth: { 
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false
+          },
+        });
+
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+        if (userError || !user) {
+          throw new Error('Authentication failed');
+        }
+
+        const adminSupabase = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
+          auth: { 
+            persistSession: false,
+            autoRefreshToken: false
+          },
+        });
+
+        const { data: credentials, error: credError } = await adminSupabase
+          .from('bot_credentials')
+          .select('gemini_api_key')
+          .eq('user_id', user.id)
+          .single();
+
+        if (credError || !credentials?.gemini_api_key) {
+          throw new Error('Gemini API key not configured');
+        }
+
+        geminiApiKey = credentials.gemini_api_key;
       }
     }
 
-    if (!credentials || !credentials.gemini_api_key) {
-      console.error('❌ Gemini API key is null/empty in database');
-      throw new Error('Gemini API key not configured. Please add your API key in settings.');
-    }
-
-    console.log('✅ Gemini API key found successfully');
-    console.log('Key length:', credentials.gemini_api_key.length);
-    
-    const geminiApiKey = credentials.gemini_api_key;
-
-    // Step 5: Prepare the prompt for Gemini
+    // Prepare the prompt for Gemini
     const prompt = `You are a helpful assistant answering questions on Reddit in r/${subreddit}. 
 
 Question Title: ${title}
@@ -137,7 +100,7 @@ Guidelines:
 
     console.log('🤖 Calling Gemini API with model: gemini-1.5-flash...');
     
-    // Step 6: Call Gemini API with the correct model name
+    // Call Gemini API
     const geminiResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
       method: 'POST',
       headers: {
@@ -189,7 +152,11 @@ Guidelines:
     console.log('Answer length:', generatedAnswer.length);
     console.log('Answer preview:', generatedAnswer.substring(0, 100) + '...');
 
-    return new Response(JSON.stringify({ answer: generatedAnswer }), {
+    // Add bot disclaimer
+    const botDisclaimer = "\n\n---\n*I'm an automated helper bot. This response was generated by AI to help answer your question.*";
+    const finalAnswer = generatedAnswer + botDisclaimer;
+
+    return new Response(JSON.stringify({ answer: finalAnswer }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 

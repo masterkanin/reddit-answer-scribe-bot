@@ -60,7 +60,7 @@ const SubredditManager: React.FC<SubredditManagerProps> = ({
         <CardHeader>
           <CardTitle className="text-white">Add New Subreddit</CardTitle>
           <CardDescription className="text-slate-400">
-            Add subreddits for the bot to monitor for questions
+            Add subreddits for the bot to monitor persistently for questions
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -97,7 +97,7 @@ const SubredditManager: React.FC<SubredditManagerProps> = ({
         <CardHeader>
           <CardTitle className="text-white">Monitored Subreddits ({subreddits.length})</CardTitle>
           <CardDescription className="text-slate-400">
-            Subreddits currently being monitored for questions
+            Subreddits being monitored persistently by the server-side bot
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -139,6 +139,12 @@ const SubredditManager: React.FC<SubredditManagerProps> = ({
                   </div>
                 );
               })}
+              {subreddits.length === 0 && (
+                <div className="text-center py-8 text-slate-400">
+                  <p>No subreddits added yet.</p>
+                  <p className="text-sm mt-2">Add subreddits above to start monitoring questions.</p>
+                </div>
+              )}
             </div>
           </ScrollArea>
         </CardContent>
