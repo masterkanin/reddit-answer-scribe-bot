@@ -344,12 +344,24 @@ export const useBotOperations = () => {
     setDailyCommentCount(todayCount);
   };
 
-  // Set up real-time subscription for session updates
+  // Single useEffect to manage all subscriptions
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setCurrentSession(null);
+      setIsRunning(false);
+      setRecentActivities([]);
+      setDailyCommentCount(0);
+      return;
+    }
 
+    // Initialize data
+    checkExistingSession();
+    fetchRecentActivities();
+    checkDailyLimits();
+
+    // Create a single channel for all real-time updates
     const channel = supabase
-      .channel('session-updates')
+      .channel(`user-updates-${user.id}`)
       .on(
         'postgres_changes',
         {
@@ -366,19 +378,6 @@ export const useBotOperations = () => {
           }
         }
       )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user]);
-
-  // Set up real-time subscription for new activities
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel('activity-updates')
       .on(
         'postgres_changes',
         {
@@ -395,23 +394,10 @@ export const useBotOperations = () => {
       )
       .subscribe();
 
+    // Cleanup function
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
-
-  // Check for existing session and fetch data when user changes
-  useEffect(() => {
-    if (user) {
-      checkExistingSession();
-      fetchRecentActivities();
-      checkDailyLimits();
-    } else {
-      setCurrentSession(null);
-      setIsRunning(false);
-      setRecentActivities([]);
-      setDailyCommentCount(0);
-    }
   }, [user]);
 
   const getStatusDisplay = () => {
