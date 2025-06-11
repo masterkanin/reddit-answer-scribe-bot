@@ -1,5 +1,4 @@
 
-
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -94,7 +93,7 @@ serve(async (req) => {
     console.log('Reddit credentials validated, attempting authentication...');
 
     // Create proper User-Agent string according to Reddit API guidelines
-    const userAgent = `RedditQABot/1.0.0 (by /u/${encodeURIComponent(reddit_username)})`;
+    const userAgent = `RedditQABot/1.0.0 (by /u/${reddit_username})`;
     console.log('Using User-Agent:', userAgent);
 
     // Enhanced Reddit authentication with better error handling
@@ -113,6 +112,7 @@ serve(async (req) => {
         'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': userAgent,
+        'Accept': 'application/json',
       },
       body: tokenBody.toString(),
     });
@@ -206,6 +206,14 @@ serve(async (req) => {
     if (action === 'testCredentials') {
       console.log('Testing Reddit credentials...');
       
+      // Common headers for all OAuth API requests
+      const oauthHeaders = {
+        'Authorization': `Bearer ${accessToken}`,
+        'User-Agent': userAgent,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+      
       // Try multiple endpoints to test API access and gather account information
       const testResults = {
         basicAuth: false,
@@ -219,20 +227,26 @@ serve(async (req) => {
       try {
         console.log('Testing basic identity endpoint...');
         const identityResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'User-Agent': userAgent,
-          },
+          headers: oauthHeaders,
         });
 
         console.log('Identity endpoint response status:', identityResponse.status);
+        console.log('Identity endpoint response headers:', Object.fromEntries(identityResponse.headers.entries()));
 
         if (identityResponse.ok) {
-          const identityData = await identityResponse.json();
-          testResults.basicAuth = true;
-          testResults.userInfo = identityData;
-          testResults.accessLevel = 'basic';
-          console.log('Basic identity test successful');
+          const responseText = await identityResponse.text();
+          console.log('Identity endpoint raw response:', responseText.substring(0, 200));
+          
+          try {
+            const identityData = JSON.parse(responseText);
+            testResults.basicAuth = true;
+            testResults.userInfo = identityData;
+            testResults.accessLevel = 'basic';
+            console.log('Basic identity test successful');
+          } catch (parseError) {
+            console.error('Failed to parse identity response as JSON:', parseError);
+            testResults.errors.push(`Identity endpoint returned non-JSON response: ${responseText.substring(0, 200)}`);
+          }
         } else {
           const errorText = await identityResponse.text();
           testResults.errors.push(`Identity endpoint failed (${identityResponse.status}): ${errorText.substring(0, 200)}`);
@@ -247,18 +261,21 @@ serve(async (req) => {
       try {
         console.log('Testing karma endpoint...');
         const karmaResponse = await fetch(`https://oauth.reddit.com/api/v1/me/karma`, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'User-Agent': userAgent,
-          },
+          headers: oauthHeaders,
         });
 
         console.log('Karma endpoint response status:', karmaResponse.status);
 
         if (karmaResponse.ok) {
-          const karmaData = await karmaResponse.json();
-          testResults.accessLevel = 'karma';
-          console.log('Karma endpoint test successful');
+          const responseText = await karmaResponse.text();
+          try {
+            const karmaData = JSON.parse(responseText);
+            testResults.accessLevel = 'karma';
+            console.log('Karma endpoint test successful');
+          } catch (parseError) {
+            console.error('Failed to parse karma response as JSON:', parseError);
+            testResults.errors.push(`Karma endpoint returned non-JSON response`);
+          }
         } else {
           const errorText = await karmaResponse.text();
           testResults.errors.push(`Karma endpoint failed (${karmaResponse.status}): ${errorText.substring(0, 200)}`);
@@ -272,17 +289,21 @@ serve(async (req) => {
       try {
         console.log('Testing subreddit access...');
         const subredditResponse = await fetch('https://oauth.reddit.com/subreddits/mine/subscriber?limit=1', {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'User-Agent': userAgent,
-          },
+          headers: oauthHeaders,
         });
 
         console.log('Subreddit endpoint response status:', subredditResponse.status);
 
         if (subredditResponse.ok) {
-          testResults.accessLevel = 'read';
-          console.log('Subreddit read test successful');
+          const responseText = await subredditResponse.text();
+          try {
+            JSON.parse(responseText);
+            testResults.accessLevel = 'read';
+            console.log('Subreddit read test successful');
+          } catch (parseError) {
+            console.error('Failed to parse subreddit response as JSON:', parseError);
+            testResults.errors.push(`Subreddit endpoint returned non-JSON response`);
+          }
         } else {
           const errorText = await subredditResponse.text();
           testResults.errors.push(`Subreddit endpoint failed (${subredditResponse.status}): ${errorText.substring(0, 200)}`);
@@ -355,6 +376,7 @@ serve(async (req) => {
         headers: {
           'Authorization': `Bearer ${accessToken}`,
           'User-Agent': userAgent,
+          'Accept': 'application/json',
         },
       });
 
@@ -415,6 +437,7 @@ serve(async (req) => {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/x-www-form-urlencoded',
           'User-Agent': userAgent,
+          'Accept': 'application/json',
         },
         body: commentBody.toString(),
       });
@@ -475,4 +498,3 @@ serve(async (req) => {
     });
   }
 });
-
