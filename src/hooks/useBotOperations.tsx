@@ -354,7 +354,7 @@ export const useBotOperations = () => {
     fetchRecentActivities,
     dailyCommentCount,
     dailyLimit: DAILY_COMMENT_LIMIT,
-    isInCooldown,
+    isInCooldown, // This should be the boolean state, not the function
     errorCount,
     isShadowbanned,
     apiCallCount,
