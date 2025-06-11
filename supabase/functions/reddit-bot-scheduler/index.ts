@@ -1,4 +1,3 @@
-
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -85,14 +84,11 @@ serve(async (req) => {
       console.log(`✅ Cleaned up ${oldSessions?.length || 0} old failed sessions`);
     }
 
-    // Get all active bot sessions
+    // Get all active bot sessions - REMOVED THE PROFILES JOIN
     console.log('📊 Fetching active bot sessions...');
     const { data: activeSessions, error: sessionsError } = await supabase
       .from('bot_sessions')
-      .select(`
-        *,
-        profiles!inner(id, email)
-      `)
+      .select('*')
       .eq('is_active', true);
 
     if (sessionsError) {
