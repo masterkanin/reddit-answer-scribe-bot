@@ -99,7 +99,12 @@ const Index = () => {
 
         {!user && (
           <div className="text-center mb-8">
-            <AuthDialog />
+            <AuthDialog>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 text-lg">
+                <Bot className="h-5 w-5 mr-2" />
+                Get Started
+              </Button>
+            </AuthDialog>
           </div>
         )}
 
@@ -213,7 +218,7 @@ const Index = () => {
               </TabsContent>
 
               <TabsContent value="activity">
-                <BotActivity />
+                <BotActivity isActive={isRunning} />
               </TabsContent>
 
               <TabsContent value="stats">
