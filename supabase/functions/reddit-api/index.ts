@@ -1,4 +1,5 @@
 
+
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -205,49 +206,143 @@ serve(async (req) => {
     if (action === 'testCredentials') {
       console.log('Testing Reddit credentials...');
       
-      // Test basic API access with the obtained token - use correct OAuth endpoint
-      const testResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'User-Agent': userAgent,
-        },
-      });
+      // Try multiple endpoints to test API access and gather account information
+      const testResults = {
+        basicAuth: false,
+        userInfo: null,
+        accessLevel: 'none',
+        accountDetails: null,
+        errors: []
+      };
 
-      console.log('Reddit API test response status:', testResponse.status);
+      // Test 1: Basic identity endpoint (most basic test)
+      try {
+        console.log('Testing basic identity endpoint...');
+        const identityResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'User-Agent': userAgent,
+          },
+        });
 
-      if (!testResponse.ok) {
-        const testErrorText = await testResponse.text();
-        console.error('Reddit API test failed with status:', testResponse.status);
-        console.error('Reddit API test error response:', testErrorText);
-        
-        let errorMessage = `Reddit API test failed: ${testResponse.status}`;
-        if (testResponse.status === 403) {
-          errorMessage = 'Access denied to Reddit API. Your account may not have API access permissions.';
-        } else if (testResponse.status === 429) {
-          errorMessage = 'Rate limited by Reddit. Please wait a moment and try again.';
-        } else if (testResponse.status === 401) {
-          errorMessage = 'Invalid access token. Please check your Reddit app configuration.';
+        console.log('Identity endpoint response status:', identityResponse.status);
+
+        if (identityResponse.ok) {
+          const identityData = await identityResponse.json();
+          testResults.basicAuth = true;
+          testResults.userInfo = identityData;
+          testResults.accessLevel = 'basic';
+          console.log('Basic identity test successful');
+        } else {
+          const errorText = await identityResponse.text();
+          testResults.errors.push(`Identity endpoint failed (${identityResponse.status}): ${errorText.substring(0, 200)}`);
+          console.log('Identity endpoint failed:', identityResponse.status);
         }
-        
-        throw new Error(errorMessage);
+      } catch (error) {
+        testResults.errors.push(`Identity endpoint error: ${error.message}`);
+        console.error('Identity endpoint error:', error);
       }
 
-      const userData = await testResponse.json();
-      console.log('Reddit API test successful, user data received');
-      
-      result = { 
-        success: true, 
-        message: 'Reddit credentials are working correctly!',
-        userData: {
-          name: userData.name,
-          id: userData.id,
-          created_utc: userData.created_utc,
-          link_karma: userData.link_karma,
-          comment_karma: userData.comment_karma,
-          has_verified_email: userData.has_verified_email,
-          is_suspended: userData.is_suspended
+      // Test 2: Try karma/trophies endpoint (less restrictive)
+      try {
+        console.log('Testing karma endpoint...');
+        const karmaResponse = await fetch(`https://oauth.reddit.com/api/v1/me/karma`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'User-Agent': userAgent,
+          },
+        });
+
+        console.log('Karma endpoint response status:', karmaResponse.status);
+
+        if (karmaResponse.ok) {
+          const karmaData = await karmaResponse.json();
+          testResults.accessLevel = 'karma';
+          console.log('Karma endpoint test successful');
+        } else {
+          const errorText = await karmaResponse.text();
+          testResults.errors.push(`Karma endpoint failed (${karmaResponse.status}): ${errorText.substring(0, 200)}`);
         }
-      };
+      } catch (error) {
+        testResults.errors.push(`Karma endpoint error: ${error.message}`);
+        console.error('Karma endpoint error:', error);
+      }
+
+      // Test 3: Try subreddit listing (tests read permissions)
+      try {
+        console.log('Testing subreddit access...');
+        const subredditResponse = await fetch('https://oauth.reddit.com/subreddits/mine/subscriber?limit=1', {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'User-Agent': userAgent,
+          },
+        });
+
+        console.log('Subreddit endpoint response status:', subredditResponse.status);
+
+        if (subredditResponse.ok) {
+          testResults.accessLevel = 'read';
+          console.log('Subreddit read test successful');
+        } else {
+          const errorText = await subredditResponse.text();
+          testResults.errors.push(`Subreddit endpoint failed (${subredditResponse.status}): ${errorText.substring(0, 200)}`);
+        }
+      } catch (error) {
+        testResults.errors.push(`Subreddit endpoint error: ${error.message}`);
+        console.error('Subreddit endpoint error:', error);
+      }
+
+      // Determine overall result and provide detailed feedback
+      if (testResults.basicAuth && testResults.userInfo) {
+        result = { 
+          success: true, 
+          message: 'Reddit credentials are working correctly!',
+          userData: {
+            name: testResults.userInfo.name,
+            id: testResults.userInfo.id,
+            created_utc: testResults.userInfo.created_utc,
+            link_karma: testResults.userInfo.link_karma,
+            comment_karma: testResults.userInfo.comment_karma,
+            has_verified_email: testResults.userInfo.has_verified_email,
+            is_suspended: testResults.userInfo.is_suspended
+          },
+          accessLevel: testResults.accessLevel,
+          diagnostics: {
+            endpoints_tested: ['identity', 'karma', 'subreddits'],
+            access_level: testResults.accessLevel,
+            errors: testResults.errors
+          }
+        };
+      } else {
+        // Provide detailed diagnostic information
+        let errorMessage = 'Reddit API access is limited or restricted';
+        let troubleshootingTips = [
+          'Your Reddit account may be too new (needs to be at least 30 days old)',
+          'Your account may need more karma (try getting 10+ karma from posts/comments)',
+          'Verify your email address in Reddit account settings',
+          'Check if your account is in good standing (not suspended/restricted)',
+          'Try waiting 24-48 hours if your account is very new',
+          'Consider using a different Reddit account with more history'
+        ];
+
+        if (testResults.errors.length > 0) {
+          errorMessage += `. Errors encountered: ${testResults.errors.join('; ')}`;
+        }
+
+        result = {
+          success: false,
+          message: errorMessage,
+          code: 'LIMITED_API_ACCESS',
+          troubleshooting: troubleshootingTips,
+          diagnostics: {
+            access_token_obtained: true,
+            endpoints_tested: ['identity', 'karma', 'subreddits'],
+            access_level: testResults.accessLevel,
+            errors: testResults.errors,
+            reddit_response_codes: testResults.errors.map(e => e.match(/\((\d+)\)/)?.[1]).filter(Boolean)
+          }
+        };
+      }
 
     } else if (action === 'getQuestions') {
       console.log(`Fetching posts from r/${subredditName}`);
@@ -380,3 +475,4 @@ serve(async (req) => {
     });
   }
 });
+
