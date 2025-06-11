@@ -11,6 +11,25 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
 
+// Helper function to validate JSON response
+const validateJsonResponse = async (response: Response, endpointName: string) => {
+  const responseText = await response.text();
+  console.log(`${endpointName} response length:`, responseText.length);
+  console.log(`${endpointName} first 200 chars:`, responseText.substring(0, 200));
+  
+  // Check if response is HTML (Reddit web interface)
+  if (responseText.includes('<html') || responseText.includes('<body') || responseText.includes('<!DOCTYPE')) {
+    throw new Error(`${endpointName} returned HTML instead of JSON - likely hitting web interface instead of API`);
+  }
+  
+  try {
+    return JSON.parse(responseText);
+  } catch (parseError) {
+    console.error(`Failed to parse ${endpointName} response as JSON:`, parseError);
+    throw new Error(`${endpointName} returned invalid JSON: ${responseText.substring(0, 100)}`);
+  }
+};
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -93,7 +112,7 @@ serve(async (req) => {
     console.log('Reddit credentials validated, attempting authentication...');
 
     // Create proper User-Agent string according to Reddit API guidelines
-    const userAgent = `RedditQABot/1.0.0 (by /u/${reddit_username})`;
+    const userAgent = `script:RedditQABot:v1.0.0 (by /u/${reddit_username})`;
     console.log('Using User-Agent:', userAgent);
 
     // Enhanced Reddit authentication with better error handling
@@ -106,6 +125,7 @@ serve(async (req) => {
 
     console.log('Requesting Reddit access token...');
     
+    // Use the correct OAuth token endpoint
     const tokenResponse = await fetch('https://www.reddit.com/api/v1/access_token', {
       method: 'POST',
       headers: {
@@ -118,6 +138,7 @@ serve(async (req) => {
     });
 
     console.log('Reddit token response status:', tokenResponse.status);
+    console.log('Reddit token response headers:', Object.fromEntries(tokenResponse.headers.entries()));
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
@@ -191,7 +212,7 @@ serve(async (req) => {
       }));
     }
 
-    const tokenData = await tokenResponse.json();
+    const tokenData = await validateJsonResponse(tokenResponse, 'Token endpoint');
     
     if (!tokenData.access_token) {
       console.error('No access token in Reddit response:', tokenData);
@@ -206,7 +227,7 @@ serve(async (req) => {
     if (action === 'testCredentials') {
       console.log('Testing Reddit credentials...');
       
-      // Common headers for all OAuth API requests
+      // Common headers for all OAuth API requests - using correct OAuth domain
       const oauthHeaders = {
         'Authorization': `Bearer ${accessToken}`,
         'User-Agent': userAgent,
@@ -220,97 +241,95 @@ serve(async (req) => {
         userInfo: null,
         accessLevel: 'none',
         accountDetails: null,
-        errors: []
+        errors: [],
+        diagnostics: {
+          tokenObtained: true,
+          endpointsTested: [],
+          responses: {}
+        }
       };
 
-      // Test 1: Basic identity endpoint (most basic test)
+      // Test 1: Try Reddit's user info endpoint (most reliable for new accounts)
       try {
-        console.log('Testing basic identity endpoint...');
-        const identityResponse = await fetch('https://oauth.reddit.com/api/v1/me', {
+        console.log('Testing user info endpoint...');
+        const userInfoUrl = 'https://oauth.reddit.com/api/v1/me';
+        console.log('Requesting:', userInfoUrl);
+        
+        const userResponse = await fetch(userInfoUrl, {
+          method: 'GET',
           headers: oauthHeaders,
         });
 
-        console.log('Identity endpoint response status:', identityResponse.status);
-        console.log('Identity endpoint response headers:', Object.fromEntries(identityResponse.headers.entries()));
+        testResults.diagnostics.endpointsTested.push('me');
+        console.log('User info endpoint response status:', userResponse.status);
+        console.log('User info endpoint response headers:', Object.fromEntries(userResponse.headers.entries()));
 
-        if (identityResponse.ok) {
-          const responseText = await identityResponse.text();
-          console.log('Identity endpoint raw response:', responseText.substring(0, 200));
-          
+        if (userResponse.ok) {
           try {
-            const identityData = JSON.parse(responseText);
+            const userData = await validateJsonResponse(userResponse, 'User info endpoint');
             testResults.basicAuth = true;
-            testResults.userInfo = identityData;
+            testResults.userInfo = userData;
             testResults.accessLevel = 'basic';
-            console.log('Basic identity test successful');
+            testResults.diagnostics.responses.me = 'success';
+            console.log('User info test successful:', userData.name);
           } catch (parseError) {
-            console.error('Failed to parse identity response as JSON:', parseError);
-            testResults.errors.push(`Identity endpoint returned non-JSON response: ${responseText.substring(0, 200)}`);
+            console.error('Failed to parse user info response:', parseError);
+            testResults.errors.push(`User info endpoint returned invalid response: ${parseError.message}`);
+            testResults.diagnostics.responses.me = 'parse_error';
           }
         } else {
-          const errorText = await identityResponse.text();
-          testResults.errors.push(`Identity endpoint failed (${identityResponse.status}): ${errorText.substring(0, 200)}`);
-          console.log('Identity endpoint failed:', identityResponse.status);
+          const errorText = await userResponse.text();
+          const errorMsg = `User info endpoint failed (${userResponse.status}): ${errorText.substring(0, 200)}`;
+          testResults.errors.push(errorMsg);
+          testResults.diagnostics.responses.me = `error_${userResponse.status}`;
+          console.log('User info endpoint failed:', userResponse.status);
+          
+          // If we get HTML, it means we're hitting the wrong endpoint
+          if (errorText.includes('<html') || errorText.includes('<body')) {
+            testResults.errors.push('API calls are being redirected to Reddit web interface - check OAuth configuration');
+          }
         }
       } catch (error) {
-        testResults.errors.push(`Identity endpoint error: ${error.message}`);
-        console.error('Identity endpoint error:', error);
+        const errorMsg = `User info endpoint error: ${error.message}`;
+        testResults.errors.push(errorMsg);
+        testResults.diagnostics.responses.me = 'network_error';
+        console.error('User info endpoint error:', error);
       }
 
-      // Test 2: Try karma/trophies endpoint (less restrictive)
-      try {
-        console.log('Testing karma endpoint...');
-        const karmaResponse = await fetch(`https://oauth.reddit.com/api/v1/me/karma`, {
-          headers: oauthHeaders,
-        });
+      // Test 2: Try a simpler endpoint for fallback verification
+      if (!testResults.basicAuth) {
+        try {
+          console.log('Testing account preferences endpoint as fallback...');
+          const prefsUrl = 'https://oauth.reddit.com/api/v1/me/prefs';
+          
+          const prefsResponse = await fetch(prefsUrl, {
+            method: 'GET',
+            headers: oauthHeaders,
+          });
 
-        console.log('Karma endpoint response status:', karmaResponse.status);
+          testResults.diagnostics.endpointsTested.push('prefs');
+          console.log('Prefs endpoint response status:', prefsResponse.status);
 
-        if (karmaResponse.ok) {
-          const responseText = await karmaResponse.text();
-          try {
-            const karmaData = JSON.parse(responseText);
-            testResults.accessLevel = 'karma';
-            console.log('Karma endpoint test successful');
-          } catch (parseError) {
-            console.error('Failed to parse karma response as JSON:', parseError);
-            testResults.errors.push(`Karma endpoint returned non-JSON response`);
+          if (prefsResponse.ok) {
+            try {
+              await validateJsonResponse(prefsResponse, 'Prefs endpoint');
+              testResults.accessLevel = 'prefs';
+              testResults.diagnostics.responses.prefs = 'success';
+              console.log('Prefs endpoint test successful');
+            } catch (parseError) {
+              testResults.errors.push(`Prefs endpoint returned invalid response: ${parseError.message}`);
+              testResults.diagnostics.responses.prefs = 'parse_error';
+            }
+          } else {
+            const errorText = await prefsResponse.text();
+            testResults.errors.push(`Prefs endpoint failed (${prefsResponse.status}): ${errorText.substring(0, 200)}`);
+            testResults.diagnostics.responses.prefs = `error_${prefsResponse.status}`;
           }
-        } else {
-          const errorText = await karmaResponse.text();
-          testResults.errors.push(`Karma endpoint failed (${karmaResponse.status}): ${errorText.substring(0, 200)}`);
+        } catch (error) {
+          testResults.errors.push(`Prefs endpoint error: ${error.message}`);
+          testResults.diagnostics.responses.prefs = 'network_error';
+          console.error('Prefs endpoint error:', error);
         }
-      } catch (error) {
-        testResults.errors.push(`Karma endpoint error: ${error.message}`);
-        console.error('Karma endpoint error:', error);
-      }
-
-      // Test 3: Try subreddit listing (tests read permissions)
-      try {
-        console.log('Testing subreddit access...');
-        const subredditResponse = await fetch('https://oauth.reddit.com/subreddits/mine/subscriber?limit=1', {
-          headers: oauthHeaders,
-        });
-
-        console.log('Subreddit endpoint response status:', subredditResponse.status);
-
-        if (subredditResponse.ok) {
-          const responseText = await subredditResponse.text();
-          try {
-            JSON.parse(responseText);
-            testResults.accessLevel = 'read';
-            console.log('Subreddit read test successful');
-          } catch (parseError) {
-            console.error('Failed to parse subreddit response as JSON:', parseError);
-            testResults.errors.push(`Subreddit endpoint returned non-JSON response`);
-          }
-        } else {
-          const errorText = await subredditResponse.text();
-          testResults.errors.push(`Subreddit endpoint failed (${subredditResponse.status}): ${errorText.substring(0, 200)}`);
-        }
-      } catch (error) {
-        testResults.errors.push(`Subreddit endpoint error: ${error.message}`);
-        console.error('Subreddit endpoint error:', error);
       }
 
       // Determine overall result and provide detailed feedback
@@ -322,46 +341,49 @@ serve(async (req) => {
             name: testResults.userInfo.name,
             id: testResults.userInfo.id,
             created_utc: testResults.userInfo.created_utc,
-            link_karma: testResults.userInfo.link_karma,
-            comment_karma: testResults.userInfo.comment_karma,
-            has_verified_email: testResults.userInfo.has_verified_email,
-            is_suspended: testResults.userInfo.is_suspended
+            link_karma: testResults.userInfo.link_karma || 0,
+            comment_karma: testResults.userInfo.comment_karma || 0,
+            has_verified_email: testResults.userInfo.has_verified_email || false,
+            is_suspended: testResults.userInfo.is_suspended || false
           },
           accessLevel: testResults.accessLevel,
-          diagnostics: {
-            endpoints_tested: ['identity', 'karma', 'subreddits'],
-            access_level: testResults.accessLevel,
-            errors: testResults.errors
-          }
+          diagnostics: testResults.diagnostics
         };
       } else {
         // Provide detailed diagnostic information
-        let errorMessage = 'Reddit API access is limited or restricted';
+        let errorMessage = 'Reddit API test failed';
         let troubleshootingTips = [
-          'Your Reddit account may be too new (needs to be at least 30 days old)',
-          'Your account may need more karma (try getting 10+ karma from posts/comments)',
-          'Verify your email address in Reddit account settings',
-          'Check if your account is in good standing (not suspended/restricted)',
-          'Try waiting 24-48 hours if your account is very new',
-          'Consider using a different Reddit account with more history'
+          'Your Reddit app configuration may be incorrect',
+          'Go to https://www.reddit.com/prefs/apps/ and verify your app is set as "script" type',
+          'Make sure your Client ID and Client Secret are copied correctly',
+          'Check that your Reddit username and password are correct',
+          'If using 2FA, create an app-specific password',
+          'New Reddit accounts may need 24-48 hours before API access works',
+          'Ensure your Reddit account email is verified'
         ];
 
+        if (testResults.errors.some(e => e.includes('HTML'))) {
+          errorMessage = 'Reddit API calls are being redirected to web interface';
+          troubleshootingTips = [
+            'Your Reddit app is likely configured incorrectly',
+            'Go to https://www.reddit.com/prefs/apps/',
+            'Delete your current app and create a new one',
+            'Select "script" as the app type (NOT web app)',
+            'Set redirect URI to http://localhost:8080',
+            'Copy the Client ID (under the app name) and Client Secret correctly'
+          ];
+        }
+
         if (testResults.errors.length > 0) {
-          errorMessage += `. Errors encountered: ${testResults.errors.join('; ')}`;
+          errorMessage += `. Errors: ${testResults.errors.slice(0, 2).join('; ')}`;
         }
 
         result = {
           success: false,
           message: errorMessage,
-          code: 'LIMITED_API_ACCESS',
+          code: 'API_TEST_FAILED',
           troubleshooting: troubleshootingTips,
-          diagnostics: {
-            access_token_obtained: true,
-            endpoints_tested: ['identity', 'karma', 'subreddits'],
-            access_level: testResults.accessLevel,
-            errors: testResults.errors,
-            reddit_response_codes: testResults.errors.map(e => e.match(/\((\d+)\)/)?.[1]).filter(Boolean)
-          }
+          diagnostics: testResults.diagnostics
         };
       }
 
@@ -399,7 +421,7 @@ serve(async (req) => {
         throw new Error(errorMessage);
       }
 
-      const data = await response.json();
+      const data = await validateJsonResponse(response, 'Subreddit endpoint');
       console.log(`Successfully fetched data from r/${subredditName}`);
       console.log(`Found ${data.data?.children?.length || 0} posts`);
       
@@ -459,7 +481,7 @@ serve(async (req) => {
         throw new Error(errorMessage);
       }
 
-      const data = await response.json();
+      const data = await validateJsonResponse(response, 'Comment endpoint');
       console.log('Comment response data:', JSON.stringify(data, null, 2));
       
       const commentId = data.json?.data?.things?.[0]?.data?.id;
