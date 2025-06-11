@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Plus, Trash2, Users, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
+import { useBotOperations } from "@/hooks/useBotOperations";
 
 interface SubredditManagerProps {
   subreddits: string[];
@@ -20,8 +21,9 @@ const SubredditManager: React.FC<SubredditManagerProps> = ({
   isAuthenticated 
 }) => {
   const [newSubreddit, setNewSubreddit] = useState('');
+  const { updateSessionSubreddits } = useBotOperations();
 
-  const addSubreddit = () => {
+  const addSubreddit = async () => {
     if (!newSubreddit.trim()) {
       toast.error("Please enter a subreddit name");
       return;
@@ -34,14 +36,34 @@ const SubredditManager: React.FC<SubredditManagerProps> = ({
       return;
     }
     
-    setSubreddits([...subreddits, cleanName]);
-    setNewSubreddit('');
-    toast.success(`Added r/${cleanName} to monitoring list`);
+    const updatedSubreddits = [...subreddits, cleanName];
+    setSubreddits(updatedSubreddits);
+    
+    // Immediately save to database
+    const success = await updateSessionSubreddits(updatedSubreddits);
+    if (success) {
+      setNewSubreddit('');
+      toast.success(`Added r/${cleanName} to monitoring list`);
+    } else {
+      // Revert local state if save failed
+      setSubreddits(subreddits);
+      toast.error("Failed to save subreddit. Please try again.");
+    }
   };
 
-  const removeSubreddit = (subredditToRemove: string) => {
-    setSubreddits(subreddits.filter(sub => sub !== subredditToRemove));
-    toast.success(`Removed r/${subredditToRemove} from monitoring`);
+  const removeSubreddit = async (subredditToRemove: string) => {
+    const updatedSubreddits = subreddits.filter(sub => sub !== subredditToRemove);
+    setSubreddits(updatedSubreddits);
+    
+    // Immediately save to database
+    const success = await updateSessionSubreddits(updatedSubreddits);
+    if (success) {
+      toast.success(`Removed r/${subredditToRemove} from monitoring`);
+    } else {
+      // Revert local state if save failed
+      setSubreddits(subreddits);
+      toast.error("Failed to remove subreddit. Please try again.");
+    }
   };
 
   const getSubredditStats = (subreddit: string) => {

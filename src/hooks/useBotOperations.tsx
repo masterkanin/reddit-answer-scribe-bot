@@ -44,6 +44,65 @@ export const useBotOperations = () => {
 
   const DAILY_COMMENT_LIMIT = 5;
 
+  // Update session subreddits immediately
+  const updateSessionSubreddits = async (subreddits: string[]) => {
+    if (!user) {
+      toast.error('Please sign in to save subreddits');
+      return false;
+    }
+
+    try {
+      console.log('💾 Updating session subreddits:', subreddits);
+      
+      // If there's an active session, update it
+      if (currentSession) {
+        const { error } = await supabase
+          .from('bot_sessions')
+          .update({
+            subreddit_list: subreddits,
+            last_activity: new Date().toISOString()
+          })
+          .eq('id', currentSession.id);
+
+        if (error) {
+          console.error('Error updating session subreddits:', error);
+          toast.error('Failed to save subreddits');
+          return false;
+        }
+
+        // Update local state
+        setCurrentSession(prev => prev ? { ...prev, subreddit_list: subreddits } : null);
+      } else if (subreddits.length > 0) {
+        // Create a new inactive session to store subreddits
+        const { data: session, error } = await supabase
+          .from('bot_sessions')
+          .insert({
+            user_id: user.id,
+            is_active: false,
+            status: 'stopped',
+            subreddit_list: subreddits,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error creating session for subreddits:', error);
+          toast.error('Failed to save subreddits');
+          return false;
+        }
+
+        setCurrentSession(session);
+      }
+
+      console.log('✅ Successfully updated session subreddits');
+      return true;
+    } catch (error) {
+      console.error('Error updating session subreddits:', error);
+      toast.error('Failed to save subreddits');
+      return false;
+    }
+  };
+
   // Start persistent bot session
   const startBot = async (subreddits: string[]) => {
     if (!user) {
@@ -94,7 +153,54 @@ export const useBotOperations = () => {
         return true;
       }
 
-      // Create new session
+      // Find existing session with subreddits or create new one
+      let sessionToUpdate = currentSession;
+      if (!sessionToUpdate) {
+        const { data: existingInactiveSession } = await supabase
+          .from('bot_sessions')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('is_active', false)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (existingInactiveSession) {
+          sessionToUpdate = existingInactiveSession;
+        }
+      }
+
+      if (sessionToUpdate) {
+        // Update existing session to be active
+        const { data: session, error } = await supabase
+          .from('bot_sessions')
+          .update({
+            is_active: true,
+            status: 'active',
+            subreddit_list: subreddits,
+            session_start: new Date().toISOString(),
+            session_end: null,
+            next_run_time: null,
+            pause_reason: null,
+            last_activity: new Date().toISOString()
+          })
+          .eq('id', sessionToUpdate.id)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Error updating session:', error);
+          toast.error('Failed to start bot session');
+          return false;
+        }
+
+        setCurrentSession(session);
+        setIsRunning(true);
+        toast.success('🤖 Bot started and running persistently!');
+        return true;
+      }
+
+      // Create completely new session
       const { data: session, error } = await supabase
         .from('bot_sessions')
         .insert({
@@ -132,14 +238,16 @@ export const useBotOperations = () => {
     try {
       console.log('🛑 Stopping persistent bot session:', currentSession.id);
       
-      const { error } = await supabase
+      const { data: session, error } = await supabase
         .from('bot_sessions')
         .update({
           is_active: false,
           status: 'stopped',
           session_end: new Date().toISOString(),
         })
-        .eq('id', currentSession.id);
+        .eq('id', currentSession.id)
+        .select()
+        .single();
 
       if (error) {
         console.error('Error stopping session:', error);
@@ -147,7 +255,7 @@ export const useBotOperations = () => {
         return;
       }
 
-      setCurrentSession(null);
+      setCurrentSession(session);
       setIsRunning(false);
       toast.success('Bot stopped');
     } catch (error) {
@@ -156,22 +264,39 @@ export const useBotOperations = () => {
     }
   };
 
-  // Check for existing active session on load
+  // Check for existing session on load
   const checkExistingSession = async () => {
     if (!user) return;
 
     try {
-      const { data: session } = await supabase
+      // First check for active session
+      const { data: activeSession } = await supabase
         .from('bot_sessions')
         .select('*')
         .eq('user_id', user.id)
         .eq('is_active', true)
         .maybeSingle();
 
-      if (session) {
-        console.log('📱 Found existing active session:', session);
-        setCurrentSession(session);
+      if (activeSession) {
+        console.log('📱 Found existing active session:', activeSession);
+        setCurrentSession(activeSession);
         setIsRunning(true);
+        return;
+      }
+
+      // If no active session, get the most recent session for subreddits
+      const { data: recentSession } = await supabase
+        .from('bot_sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (recentSession) {
+        console.log('📱 Found recent session for subreddits:', recentSession);
+        setCurrentSession(recentSession);
+        setIsRunning(recentSession.is_active);
       }
     } catch (error) {
       console.error('Error checking existing session:', error);
@@ -316,6 +441,7 @@ export const useBotOperations = () => {
     recentActivities,
     startBot,
     stopBot,
+    updateSessionSubreddits,
     fetchRecentActivities,
     dailyCommentCount,
     dailyLimit: DAILY_COMMENT_LIMIT,

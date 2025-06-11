@@ -34,7 +34,10 @@ const Index = () => {
   // Sync subreddits with current session
   useEffect(() => {
     if (currentSession?.subreddit_list) {
+      console.log('🔄 Syncing subreddits from session:', currentSession.subreddit_list);
       setSubreddits(currentSession.subreddit_list);
+    } else {
+      console.log('🔄 No subreddits in session, keeping local state');
     }
   }, [currentSession]);
 
